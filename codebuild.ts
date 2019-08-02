@@ -5,7 +5,10 @@ import {
   MessageResult,
   updateOrAddAttachment,
 } from './slack';
+import * as AWS from "aws-sdk";
 
+const s3 = new AWS.S3();
+const S3_SLACK_COMMIT_BUCKET = process.env.S3_SLACK_COMMIT_BUCKET;
 /**
  * See https://docs.aws.amazon.com/codebuild/latest/userguide/sample-build-notifications.html#sample-build-notifications-ref
  */
@@ -30,6 +33,19 @@ export type CodeBuildStatus =
   | 'SUCCEEDED'
   | 'FAULT'
   | 'CLIENT_ERROR';
+
+const PHASE_MAP_TO_REAL = {
+  'SUBMITTED': "START",
+  'PROVISIONING': "SUPPLY",
+  'DOWNLOAD_SOURCE': "SOURCE",
+  'INSTALL': "INSTALL",
+  'PRE_BUILD': "PULL",
+  'BUILD': "BUILD",
+  'POST_BUILD': "SPEC",
+  'UPLOAD_ARTIFACTS': "RESULT",
+  'FINALIZING': "EXIT",
+  'COMPLETED': "DONE"
+};
 
 interface CodeBuildEnvironmentVariable {
   name: string;
@@ -206,7 +222,7 @@ const gitRevision = (event: CodeBuildEvent): string => {
     }
     // Commit (a commit sha has a length of 40 chars)
     if(sourceVersion.length === 40) { // tslint:disable-line:no-magic-numbers
-      return `<${githubProjectUrl}/commit/${sourceVersion}|${sourceVersion}>`;
+      return `<${githubProjectUrl}/commit/${sourceVersion}|${sourceVersion.slice(0, 8)}>`;
     }
     // Branch
     return `<${githubProjectUrl}/tree/${sourceVersion}|${sourceVersion}>`;
@@ -214,45 +230,135 @@ const gitRevision = (event: CodeBuildEvent): string => {
   return event.detail['additional-information']['source-version'] || 'unknown';
 };
 
+async function downloadCommitLog (commitId: string | undefined) {
+  await new Promise(resolve => setTimeout(resolve, 65000));
+  if (!commitId) return '<commit log not found>';
+  try {
+    const params = {
+      Bucket: S3_SLACK_COMMIT_BUCKET,
+      Key: `commits/${commitId}.log`
+    }
+
+    const data = await s3.getObject(params).promise();
+    const body = data.Body || '';
+    return body.toString();
+  } catch (e) {
+    throw new Error(`Could not retrieve file from S3: ${e.message}`)
+  }
+}
+
+function eventToCommitId(event: CodeBuildEvent) {
+  return event.detail['additional-information']['source-version'];
+}
+
+// Git revision, possibly with URL
+const gitDetails = function (commitLog: string) {
+  return commitLog;
+};
+
+const addReducer = (accumulator: number, currentValue: number): number => accumulator + currentValue;
+function hasSucceeded(status: string) {
+  return status  === 'SUCCEEDED';
+}
+
 export const buildPhaseAttachment = (
   event: CodeBuildEvent,
 ): MessageAttachment => {
   const phases = event.detail['additional-information'].phases;
   if (phases) {
-    return {
-      fallback: `Current phase: ${phases[phases.length - 1]['phase-type']}`,
-      text: phases
+
+    const startPhases = phases
+    .filter(
+      phase =>
+          phase['phase-type'] == 'SUBMITTED' ||
+          phase['phase-type'] == 'PROVISIONING' ||
+          phase['phase-type'] == 'DOWNLOAD_SOURCE' ||
+          phase['phase-type'] == 'INSTALL' ||
+          phase['phase-type'] == 'PRE_BUILD'
+      );
+    const endPhases = phases
+    .filter(
+      phase =>
+        phase['phase-type'] == 'UPLOAD_ARTIFACTS' ||
+        phase['phase-type'] == 'FINALIZING' ||
+        phase['phase-type'] == 'COMPLETED'
+      );
+
+    const totalStartSeconds = startPhases
+    .map(phase => phase['duration-in-seconds'] !== undefined ? 0 : phase['duration-in-seconds'])
+    .reduce(addReducer) || 0;
+
+    const startSucceeded = startPhases
+    .map(phase => phase['phase-status'])
+    .every(hasSucceeded) || false;
+
+    const totalEndSeconds = endPhases
+    .map(phase => phase['duration-in-seconds'] !== undefined ? 0 : phase['duration-in-seconds'])
+    .reduce(addReducer) || 0;
+
+    const endSucceeded = endPhases
+    .map(phase => phase['phase-status'])
+    .every(hasSucceeded) || false;
+
+    var resultText = '';
+
+    resultText += totalStartSeconds > 0 && startPhases.length == 5 ? `${
+      startSucceeded ? ':white_check_mark:' : ':x:'
+    } SETUP (${timeString(totalStartSeconds)})` : `:building_construction: SETUP`;
+
+    if(totalStartSeconds > 0 && startPhases.length == 5 && startSucceeded){
+      resultText += ' ';
+      resultText += phases
         .filter(
           phase =>
-            phase['phase-type'] !== 'SUBMITTED' &&
-            phase['phase-type'] !== 'COMPLETED',
-        )
-        .map(phase => {
-          if (phase['duration-in-seconds'] !== undefined) {
-            return `${
-              phase['phase-status'] === 'SUCCEEDED'
-                ? ':white_check_mark:'
-                : ':x:'
-            } ${phase['phase-type']} (${timeString(
-              phase['duration-in-seconds'],
-            )})`;
-          }
-          return `:building_construction: ${phase['phase-type']}`;
-        })
-        .join(' '),
-      title: 'Build Phases',
+              phase['phase-type'] !== 'SUBMITTED' &&
+              phase['phase-type'] !== 'PROVISIONING' &&
+              phase['phase-type'] !== 'DOWNLOAD_SOURCE' &&
+              phase['phase-type'] !== 'INSTALL' &&
+              phase['phase-type'] !== 'PRE_BUILD' &&
+              phase['phase-type'] !== 'FINALIZING' &&
+              phase['phase-type'] !== 'UPLOAD_ARTIFACTS' &&
+              phase['phase-type'] !== 'COMPLETED'
+          )
+          .map(phase => {
+            if (phase['duration-in-seconds'] !== undefined) {
+              return `${
+                phase['phase-status'] === 'SUCCEEDED'
+                  ? ':white_check_mark:'
+                  : ':x:'
+              } ${PHASE_MAP_TO_REAL[phase['phase-type']]} (${timeString(
+                phase['duration-in-seconds'],
+              )})`;
+            }
+            return `:building_construction: ${PHASE_MAP_TO_REAL[phase['phase-type']]}`;
+          })
+          .join(' ');
+
+      if (totalEndSeconds > 0){
+        resultText += ' ';
+        resultText += totalEndSeconds > 0 && endPhases.length == 3 ? `${
+          endSucceeded ? ':white_check_mark:' : ':x:'
+        } FINAL (${timeString(totalEndSeconds)})` : `:building_construction: FINAL`;  
+      }          
+    }
+
+    return {
+      fallback: `Current phase: ${phases[phases.length - 1]['phase-type']}`,
+      text: resultText,
+      title: 'Stages',
     };
   }
   return {
     fallback: `not started yet`,
     text: '',
-    title: 'Build Phases',
+    title: 'Stages',
   };
 };
 
 // Construct the build message
 const buildEventToMessage = (
   event: CodeBuildStateEvent,
+  commitLog: string
 ): MessageAttachment[] => {
   const startTime = Date.parse(
     event.detail['additional-information']['build-start-time'],
@@ -286,19 +392,24 @@ const buildEventToMessage = (
         fields: [
           {
             short: false,
-            title: 'Initiator',
-            value: event.detail['additional-information'].initiator || 'unknown',
+            title: 'Git revision',
+            value: gitRevision(event),
           },
           {
             short: false,
-            title: 'Git revision',
-            value: gitRevision(event),
+            title: 'Details',
+            value: gitDetails(commitLog),
           },
           ...(event.detail['additional-information'].phases || [])
             .filter(
               phase =>
                 phase['phase-status'] != null &&
-                phase['phase-status'] !== 'SUCCEEDED',
+                phase['phase-type'] !== 'SUBMITTED' &&
+                phase['phase-type'] !== 'FINALIZING' &&
+                phase['phase-type'] !== 'UPLOAD_ARTIFACTS' &&
+                phase['phase-type'] !== 'PROVISIONING' &&
+                phase['phase-type'] !== 'DOWNLOAD_SOURCE' &&
+                phase['phase-type'] !== 'COMPLETED'
             )
             .map(phase => ({
               short: false,
@@ -327,14 +438,14 @@ const buildEventToMessage = (
       fallback: text,
       fields: [
         {
-          short: false,
-          title: 'Initiator',
-          value: event.detail['additional-information'].initiator || 'unknown',
-        },
-        {
           short: true,
           title: 'Git revision',
           value: gitRevision(event),
+        },
+        {
+          short: false,
+          title: 'Details',
+          value: gitDetails(commitLog),
         },
       ],
       footer: buildId(event),
@@ -343,12 +454,15 @@ const buildEventToMessage = (
   ];
 };
 
+
 // Handle the event for one channel
 export const handleCodeBuildEvent = async (
   event: CodeBuildEvent,
   slack: WebClient,
   channel: Channel,
 ): Promise<MessageResult | void> => {
+  const commitId = eventToCommitId(event);
+  const commitLog = await downloadCommitLog(commitId);
   // State change event
   if (event['detail-type'] === 'CodeBuild Build State Change') {
     if (event.detail['additional-information']['build-complete']) {
@@ -359,7 +473,7 @@ export const handleCodeBuildEvent = async (
       );
       if (stateMessage) {
         return slack.chat.update({
-          attachments: buildEventToMessage(event),
+          attachments: buildEventToMessage(event, commitLog),
           channel: channel.id,
           text: '',
           ts: stateMessage.ts,
@@ -367,12 +481,13 @@ export const handleCodeBuildEvent = async (
       }
     }
     return slack.chat.postMessage({
-      attachments: buildEventToMessage(event),
+      attachments: buildEventToMessage(event, commitLog),
       channel: channel.id,
       text: '',
     }) as Promise<MessageResult>;
   }
   // Phase change event
+  
   const message = await findMessageForId(slack, channel.id, buildId(event));
   if (message) {
     return slack.chat.update({
