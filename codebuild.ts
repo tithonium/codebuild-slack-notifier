@@ -231,8 +231,6 @@ const gitRevision = (event: CodeBuildEvent): string => {
 };
 
 async function downloadCommitLog(commitId: string | undefined) {
-  const t = await new Promise(resolve => setTimeout(resolve, 65000));
-  console.log("After setTimeout", t);
   if (!commitId) return '<commit log not found>';
   try {
     const params = {
@@ -264,10 +262,8 @@ function hasSucceeded(status) {
 export const buildPhaseAttachment = (
   event: CodeBuildEvent,
 ): MessageAttachment => {
-  try {
     const phases = event.detail['additional-information'].phases;
     if (phases) {
-      console.log(1)
       const startPhases = phases
         .filter(
           phase =>
@@ -296,7 +292,7 @@ export const buildPhaseAttachment = (
         .map(phase => phase['phase-status'])
         .every(hasSucceeded) || false;
 
-      console.log(totalStartSeconds, startSucceeded)
+      console.log("start", totalStartSeconds, startSucceeded)
 
       const totalEndSeconds = endPhases
         .map(phase => phase['duration-in-seconds'] !== undefined ? 0 : phase['duration-in-seconds'])
@@ -306,7 +302,7 @@ export const buildPhaseAttachment = (
         .map(phase => phase['phase-status'])
         .every(hasSucceeded) || false;
 
-      console.log(totalEndSeconds, endSucceeded)
+      console.log("end", totalEndSeconds, endSucceeded)
 
       var resultText = '';
 
@@ -336,11 +332,11 @@ export const buildPhaseAttachment = (
                 phase['phase-status'] === 'SUCCEEDED'
                   ? ':white_check_mark:'
                   : ':x:'
-                } ${PHASE_MAP_TO_REAL[phase['phase-type']]} (${timeString(
+                } ${phase['phase-type']} (${timeString(
                   phase['duration-in-seconds'],
                 )})`;
             }
-            return `:building_construction: ${PHASE_MAP_TO_REAL[phase['phase-type']]}`;
+            return `:building_construction: ${phase['phase-type']}`;
           })
           .join(' ');
         console.log(2, "resultText", resultText);
@@ -358,18 +354,15 @@ export const buildPhaseAttachment = (
       return {
         fallback: `Current phase: ${phases[phases.length - 1]['phase-type']}`,
         text: resultText,
-        title: 'Stages',
+        title: 'Build Phases',
       };
     }
 
     return {
       fallback: `not started yet`,
       text: '',
-      title: 'Stages',
+      title: 'Build Phases',
     };
-  } catch (e) {
-    throw new Error(`Failed building phases: ${e.message}`)
-  }
 };
 
 // Construct the build message
