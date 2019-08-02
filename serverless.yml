@@ -14,8 +14,8 @@ provider:
   stage: ${opt:stage, 'tools'}
   memorySize: 128
   runtime: nodejs8.10
-  timeout: 15
-  region: ${opt:region, 'eu-west-1'}
+  timeout: 120
+  region: ${opt:region, 'us-west-2'}
   environment:
     DEBUG: ${self:custom.env.DEBUG, 'true'}
     TRACE: ${self:custom.env.TRACE, 'false'}
@@ -24,6 +24,7 @@ provider:
     VERSION: ${self:custom.package.version}
     GIT_COMMIT_SHA: ${file(./env/gitCommitSha.js):gitCommitSHA}
     SERVICE: ${self:service.name}
+    S3_SLACK_COMMIT_BUCKET: cb-to-slack-tools-serverlessdeploymentbucket-1ndhem0ioiw1k
 
 package:
   individually: true
@@ -31,7 +32,7 @@ package:
 functions:
   PostUpdateToSlack:
     handler: index.handler
-    reservedConcurrency: 1
+    reservedConcurrency: 100
     iamRoleStatements:
       - Effect: Allow
         Action:

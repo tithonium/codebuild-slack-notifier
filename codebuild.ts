@@ -7,12 +7,13 @@ import {
 } from './slack';
 import * as AWS from "aws-sdk";
 
-const s3 = new AWS.S3({maxRetries: 30, retryDelayOptions: { base: 10000 }});
+const s3 = new AWS.S3();
 const S3_SLACK_COMMIT_BUCKET = process.env.S3_SLACK_COMMIT_BUCKET;
 /**
  * See https://docs.aws.amazon.com/codebuild/latest/userguide/sample-build-notifications.html#sample-build-notifications-ref
  */
 export type CodeBuildPhase =
+  | 'QUEUED'
   | 'SUBMITTED'
   | 'PROVISIONING'
   | 'DOWNLOAD_SOURCE'
@@ -35,13 +36,14 @@ export type CodeBuildStatus =
   | 'CLIENT_ERROR';
 
 const PHASE_MAP_TO_REAL = {
+  'QUEUED': "START",
   'SUBMITTED': "START",
   'PROVISIONING': "SUPPLY",
   'DOWNLOAD_SOURCE': "SOURCE",
   'INSTALL': "INSTALL",
   'PRE_BUILD': "PULL",
   'BUILD': "BUILD",
-  'POST_BUILD': "SPEC",
+  'POST_BUILD': "TEST",
   'UPLOAD_ARTIFACTS': "RESULT",
   'FINALIZING': "EXIT",
   'COMPLETED': "DONE"
@@ -232,17 +234,19 @@ const gitRevision = (event: CodeBuildEvent): string => {
 
 async function downloadCommitLog(commitId: string | undefined) {
   if (!commitId) return '<commit log not found>';
+  const params = {
+    Bucket: S3_SLACK_COMMIT_BUCKET || '',
+    Key: `commits/${commitId}.log`
+  }
   try {
-    const params = {
-      Bucket: S3_SLACK_COMMIT_BUCKET || '',
-      Key: `commits/${commitId}.log`
-    }
-
     const data = await s3.getObject(params).promise();
     const body = data.Body || '';
     return body.toString();
   } catch (e) {
-    throw new Error(`Could not retrieve file from S3: ${e.message}`)
+    const t = await new Promise(resolve => setTimeout(resolve, 65000));
+    const data = await s3.getObject(params).promise();
+    const body = data.Body || '';
+    return body.toString();
   }
 }
 
@@ -267,6 +271,7 @@ export const buildPhaseAttachment = (
       const startPhases = phases
         .filter(
           phase =>
+            phase['phase-type'] == 'QUEUED' ||
             phase['phase-type'] == 'SUBMITTED' ||
             phase['phase-type'] == 'PROVISIONING' ||
             phase['phase-type'] == 'DOWNLOAD_SOURCE' ||
@@ -281,28 +286,21 @@ export const buildPhaseAttachment = (
             phase['phase-type'] == 'COMPLETED'
         );
 
-      console.log(JSON.stringify(startPhases));
-      console.log(JSON.stringify(endPhases));
-
       const totalStartSeconds = startPhases
-        .map(phase => phase['duration-in-seconds'] !== undefined ? 0 : phase['duration-in-seconds'])
+        .map(phase => phase['duration-in-seconds'] !== undefined ? phase['duration-in-seconds'] : 0)
         .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0;
 
       const startSucceeded = startPhases
         .map(phase => phase['phase-status'])
         .every(hasSucceeded) || false;
 
-      console.log("start", totalStartSeconds, startSucceeded)
-
       const totalEndSeconds = endPhases
-        .map(phase => phase['duration-in-seconds'] !== undefined ? 0 : phase['duration-in-seconds'])
+        .map(phase => phase['duration-in-seconds'] !== undefined ? phase['duration-in-seconds'] : 0)
         .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0;
 
       const endSucceeded = endPhases
         .map(phase => phase['phase-status'])
         .every(hasSucceeded) || false;
-
-      console.log("end", totalEndSeconds, endSucceeded)
 
       var resultText = '';
 
@@ -310,13 +308,12 @@ export const buildPhaseAttachment = (
         startSucceeded ? ':white_check_mark:' : ':x:'
         } SETUP (${timeString(totalStartSeconds)})` : `:building_construction: SETUP`;
 
-      console.log(1, "resultText", resultText);
-
-      if (totalStartSeconds > 0 && startPhases.length == 5 && startSucceeded) {
+      if (totalStartSeconds > 0 && startPhases.length >= 5 && startSucceeded) {
         resultText += ' ';
         resultText += phases
           .filter(
             phase =>
+              phase['phase-type'] !== 'QUEUED' &&
               phase['phase-type'] !== 'SUBMITTED' &&
               phase['phase-type'] !== 'PROVISIONING' &&
               phase['phase-type'] !== 'DOWNLOAD_SOURCE' &&
@@ -332,24 +329,21 @@ export const buildPhaseAttachment = (
                 phase['phase-status'] === 'SUCCEEDED'
                   ? ':white_check_mark:'
                   : ':x:'
-                } ${phase['phase-type']} (${timeString(
+                } ${PHASE_MAP_TO_REAL[phase['phase-type']]} (${timeString(
                   phase['duration-in-seconds'],
                 )})`;
             }
-            return `:building_construction: ${phase['phase-type']}`;
+            return `:building_construction: ${PHASE_MAP_TO_REAL[phase['phase-type']]}`;
           })
           .join(' ');
-        console.log(2, "resultText", resultText);
 
         if (totalEndSeconds > 0) {
           resultText += ' ';
-          resultText += (totalEndSeconds > 0 && endPhases.length == 3) ? `${
+          resultText += (totalEndSeconds > 0 && endPhases.length >= 3) ? `${
             endSucceeded ? ':white_check_mark:' : ':x:'
             } FINAL (${timeString(totalEndSeconds)})` : `:building_construction: FINAL`;
         }
       }
-
-      console.log(3, "resultText", resultText);
 
       return {
         fallback: `Current phase: ${phases[phases.length - 1]['phase-type']}`,
@@ -410,20 +404,20 @@ const buildEventToMessage = (
             title: 'Details',
             value: gitDetails(commitLog),
           },
-          ...(event.detail['additional-information'].phases || [])
-            .filter(
-              phase =>
-                phase['phase-status'] != null
-            )
-            .map(phase => ({
-              short: false,
-              title: `Phase ${phase[
-                'phase-type'
-              ].toLowerCase()} ${buildStatusToText(
-                event.detail['build-status'],
-              )}`,
-              value: (phase['phase-context'] || []).join('\n'),
-            })),
+          // ...(event.detail['additional-information'].phases || [])
+          //   .filter(
+          //     phase =>
+          //       phase['phase-status'] != null
+          //   )
+          //   .map(phase => ({
+          //     short: false,
+          //     title: `Phase ${phase[
+          //       'phase-type'
+          //     ].toLowerCase()} ${buildStatusToText(
+          //       event.detail['build-status'],
+          //     )}`,
+          //     value: (phase['phase-context'] || []).join('\n'),
+          //   })),
         ],
         footer: buildId(event),
         text: completeText,
