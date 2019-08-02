@@ -72,9 +72,9 @@ interface CodeBuildEventAdditionalInformation {
     image: string;
     'privileged-mode': boolean;
     'compute-type':
-      | 'BUILD_GENERAL1_SMALL'
-      | 'BUILD_GENERAL1_MEDIUM'
-      | 'BUILD_GENERAL1_LARGE';
+    | 'BUILD_GENERAL1_SMALL'
+    | 'BUILD_GENERAL1_MEDIUM'
+    | 'BUILD_GENERAL1_LARGE';
     type: 'LINUX_CONTAINER';
     'environment-variables': CodeBuildEnvironmentVariable[];
   };
@@ -185,9 +185,9 @@ const buildStatusToText = (status: CodeBuildStatus): string => {
 export const projectLink = (event: CodeBuildEvent): string => {
   return `<https://${
     event.region
-  }.console.aws.amazon.com/codebuild/home?region=${event.region}#/projects/${
+    }.console.aws.amazon.com/codebuild/home?region=${event.region}#/projects/${
     event.detail['project-name']
-  }/view|${event.detail['project-name']}>`;
+    }/view|${event.detail['project-name']}>`;
 };
 
 // Get the build ID from the Codebuild event
@@ -201,7 +201,7 @@ export const timeString = (seconds: number | undefined): string => {
   if (seconds !== undefined) {
     return `${
       seconds > minute ? `${Math.floor(seconds / minute)}m` : ''
-    }${seconds % minute}s`;
+      }${seconds % minute}s`;
   }
   return '';
 };
@@ -221,7 +221,7 @@ const gitRevision = (event: CodeBuildEvent): string => {
       return `<${githubProjectUrl}/pull/${pr[1]}|Pull request #${pr[1]}>`;
     }
     // Commit (a commit sha has a length of 40 chars)
-    if(sourceVersion.length === 40) { // tslint:disable-line:no-magic-numbers
+    if (sourceVersion.length === 40) { // tslint:disable-line:no-magic-numbers
       return `<${githubProjectUrl}/commit/${sourceVersion}|${sourceVersion.slice(0, 8)}>`;
     }
     // Branch
@@ -230,7 +230,7 @@ const gitRevision = (event: CodeBuildEvent): string => {
   return event.detail['additional-information']['source-version'] || 'unknown';
 };
 
-async function downloadCommitLog (commitId: string | undefined) {
+async function downloadCommitLog(commitId: string | undefined) {
   await new Promise(resolve => setTimeout(resolve, 65000));
   if (!commitId) return '<commit log not found>';
   try {
@@ -258,7 +258,7 @@ const gitDetails = function (commitLog: string) {
 
 const addReducer = (accumulator: number, currentValue: number): number => accumulator + currentValue;
 function hasSucceeded(status: string) {
-  return status  === 'SUCCEEDED';
+  return status === 'SUCCEEDED';
 }
 
 export const buildPhaseAttachment = (
@@ -268,8 +268,8 @@ export const buildPhaseAttachment = (
   if (phases) {
 
     const startPhases = phases
-    .filter(
-      phase =>
+      .filter(
+        phase =>
           phase['phase-type'] == 'SUBMITTED' ||
           phase['phase-type'] == 'PROVISIONING' ||
           phase['phase-type'] == 'DOWNLOAD_SOURCE' ||
@@ -277,69 +277,69 @@ export const buildPhaseAttachment = (
           phase['phase-type'] == 'PRE_BUILD'
       );
     const endPhases = phases
-    .filter(
-      phase =>
-        phase['phase-type'] == 'UPLOAD_ARTIFACTS' ||
-        phase['phase-type'] == 'FINALIZING' ||
-        phase['phase-type'] == 'COMPLETED'
+      .filter(
+        phase =>
+          phase['phase-type'] == 'UPLOAD_ARTIFACTS' ||
+          phase['phase-type'] == 'FINALIZING' ||
+          phase['phase-type'] == 'COMPLETED'
       );
 
     const totalStartSeconds = startPhases
-    .map(phase => phase['duration-in-seconds'] !== undefined ? 0 : phase['duration-in-seconds'])
-    .reduce(addReducer) || 0;
+      .map(phase => phase['duration-in-seconds'] !== undefined ? 0 : phase['duration-in-seconds'])
+      .reduce(addReducer) || 0;
 
     const startSucceeded = startPhases
-    .map(phase => phase['phase-status'])
-    .every(hasSucceeded) || false;
+      .map(phase => phase['phase-status'])
+      .every(hasSucceeded) || false;
 
     const totalEndSeconds = endPhases
-    .map(phase => phase['duration-in-seconds'] !== undefined ? 0 : phase['duration-in-seconds'])
-    .reduce(addReducer) || 0;
+      .map(phase => phase['duration-in-seconds'] !== undefined ? 0 : phase['duration-in-seconds'])
+      .reduce(addReducer) || 0;
 
     const endSucceeded = endPhases
-    .map(phase => phase['phase-status'])
-    .every(hasSucceeded) || false;
+      .map(phase => phase['phase-status'])
+      .every(hasSucceeded) || false;
 
     var resultText = '';
 
     resultText += totalStartSeconds > 0 && startPhases.length == 5 ? `${
       startSucceeded ? ':white_check_mark:' : ':x:'
-    } SETUP (${timeString(totalStartSeconds)})` : `:building_construction: SETUP`;
+      } SETUP (${timeString(totalStartSeconds)})` : `:building_construction: SETUP`;
 
-    if(totalStartSeconds > 0 && startPhases.length == 5 && startSucceeded){
+    if (totalStartSeconds > 0 && startPhases.length == 5 && startSucceeded) {
       resultText += ' ';
       resultText += phases
         .filter(
           phase =>
-              phase['phase-type'] !== 'SUBMITTED' &&
-              phase['phase-type'] !== 'PROVISIONING' &&
-              phase['phase-type'] !== 'DOWNLOAD_SOURCE' &&
-              phase['phase-type'] !== 'INSTALL' &&
-              phase['phase-type'] !== 'PRE_BUILD' &&
-              phase['phase-type'] !== 'FINALIZING' &&
-              phase['phase-type'] !== 'UPLOAD_ARTIFACTS' &&
-              phase['phase-type'] !== 'COMPLETED'
-          )
-          .map(phase => {
-            if (phase['duration-in-seconds'] !== undefined) {
-              return `${
-                phase['phase-status'] === 'SUCCEEDED'
-                  ? ':white_check_mark:'
-                  : ':x:'
+            phase['phase-type'] !== 'SUBMITTED' &&
+            phase['phase-type'] !== 'PROVISIONING' &&
+            phase['phase-type'] !== 'DOWNLOAD_SOURCE' &&
+            phase['phase-type'] !== 'INSTALL' &&
+            phase['phase-type'] !== 'PRE_BUILD' &&
+            phase['phase-type'] !== 'FINALIZING' &&
+            phase['phase-type'] !== 'UPLOAD_ARTIFACTS' &&
+            phase['phase-type'] !== 'COMPLETED'
+        )
+        .map(phase => {
+          if (phase['duration-in-seconds'] !== undefined) {
+            return `${
+              phase['phase-status'] === 'SUCCEEDED'
+                ? ':white_check_mark:'
+                : ':x:'
               } ${PHASE_MAP_TO_REAL[phase['phase-type']]} (${timeString(
                 phase['duration-in-seconds'],
               )})`;
-            }
-            return `:building_construction: ${PHASE_MAP_TO_REAL[phase['phase-type']]}`;
-          })
-          .join(' ');
+          }
+          return `:building_construction: ${PHASE_MAP_TO_REAL[phase['phase-type']]}`;
+        })
+        .join(' ');
 
-      if (totalEndSeconds > 0){
+      if (totalEndSeconds > 0) {
         resultText += ' ';
         resultText += totalEndSeconds > 0 && endPhases.length == 3 ? `${
           endSucceeded ? ':white_check_mark:' : ':x:'
-        } FINAL (${timeString(totalEndSeconds)})` : `:building_construction: FINAL`;  
-      }          
+          } FINAL (${timeString(totalEndSeconds)})` : `:building_construction: FINAL`;
+      }
     }
 
     return {
@@ -367,9 +367,9 @@ const buildEventToMessage = (
   // URL to the Codebuild view for the build
   const buildUrl = `https://${
     event.region
-  }.console.aws.amazon.com/codebuild/home?region=${event.region}#/builds/${
+    }.console.aws.amazon.com/codebuild/home?region=${event.region}#/builds/${
     event.detail['build-id'].split('/')[1]
-  }/view/new`;
+    }/view/new`;
 
   if (event.detail['additional-information']['build-complete']) {
     const minute = 60;
@@ -383,7 +383,7 @@ const buildEventToMessage = (
       event,
     )} ${buildStatusToText(event.detail['build-status'])} after ${
       minutes ? `${minutes} min ` : ''
-    }${seconds ? `${seconds} sec` : ''}`;
+      }${seconds ? `${seconds} sec` : ''}`;
 
     return [
       {
@@ -487,7 +487,7 @@ export const handleCodeBuildEvent = async (
     }) as Promise<MessageResult>;
   }
   // Phase change event
-  
+
   const message = await findMessageForId(slack, channel.id, buildId(event));
   if (message) {
     return slack.chat.update({
