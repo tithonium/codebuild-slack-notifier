@@ -7,7 +7,7 @@ import {
 } from './slack';
 import * as AWS from "aws-sdk";
 
-const s3 = new AWS.S3();
+const s3 = new AWS.S3({maxRetries: 30, retryDelayOptions: { base: 10000 }});
 const S3_SLACK_COMMIT_BUCKET = process.env.S3_SLACK_COMMIT_BUCKET;
 /**
  * See https://docs.aws.amazon.com/codebuild/latest/userguide/sample-build-notifications.html#sample-build-notifications-ref
@@ -231,11 +231,12 @@ const gitRevision = (event: CodeBuildEvent): string => {
 };
 
 async function downloadCommitLog(commitId: string | undefined) {
-  await new Promise(resolve => setTimeout(resolve, 65000));
+  const t = await new Promise(resolve => setTimeout(resolve, 65000));
+  console.log("After setTimeout", t);
   if (!commitId) return '<commit log not found>';
   try {
     const params = {
-      Bucket: S3_SLACK_COMMIT_BUCKET,
+      Bucket: S3_SLACK_COMMIT_BUCKET || '',
       Key: `commits/${commitId}.log`
     }
 
@@ -256,103 +257,119 @@ const gitDetails = function (commitLog: string) {
   return commitLog;
 };
 
-const addReducer = (accumulator: number, currentValue: number): number => accumulator + currentValue;
-function hasSucceeded(status: string) {
+function hasSucceeded(status) {
   return status === 'SUCCEEDED';
 }
 
 export const buildPhaseAttachment = (
   event: CodeBuildEvent,
 ): MessageAttachment => {
-  const phases = event.detail['additional-information'].phases;
-  if (phases) {
-
-    const startPhases = phases
-      .filter(
-        phase =>
-          phase['phase-type'] == 'SUBMITTED' ||
-          phase['phase-type'] == 'PROVISIONING' ||
-          phase['phase-type'] == 'DOWNLOAD_SOURCE' ||
-          phase['phase-type'] == 'INSTALL' ||
-          phase['phase-type'] == 'PRE_BUILD'
-      );
-    const endPhases = phases
-      .filter(
-        phase =>
-          phase['phase-type'] == 'UPLOAD_ARTIFACTS' ||
-          phase['phase-type'] == 'FINALIZING' ||
-          phase['phase-type'] == 'COMPLETED'
-      );
-
-    const totalStartSeconds = startPhases
-      .map(phase => phase['duration-in-seconds'] !== undefined ? 0 : phase['duration-in-seconds'])
-      .reduce(addReducer) || 0;
-
-    const startSucceeded = startPhases
-      .map(phase => phase['phase-status'])
-      .every(hasSucceeded) || false;
-
-    const totalEndSeconds = endPhases
-      .map(phase => phase['duration-in-seconds'] !== undefined ? 0 : phase['duration-in-seconds'])
-      .reduce(addReducer) || 0;
-
-    const endSucceeded = endPhases
-      .map(phase => phase['phase-status'])
-      .every(hasSucceeded) || false;
-
-    var resultText = '';
-
-    resultText += totalStartSeconds > 0 && startPhases.length == 5 ? `${
-      startSucceeded ? ':white_check_mark:' : ':x:'
-      } SETUP (${timeString(totalStartSeconds)})` : `:building_construction: SETUP`;
-
-    if (totalStartSeconds > 0 && startPhases.length == 5 && startSucceeded) {
-      resultText += ' ';
-      resultText += phases
+  try {
+    const phases = event.detail['additional-information'].phases;
+    if (phases) {
+      console.log(1)
+      const startPhases = phases
         .filter(
           phase =>
-            phase['phase-type'] !== 'SUBMITTED' &&
-            phase['phase-type'] !== 'PROVISIONING' &&
-            phase['phase-type'] !== 'DOWNLOAD_SOURCE' &&
-            phase['phase-type'] !== 'INSTALL' &&
-            phase['phase-type'] !== 'PRE_BUILD' &&
-            phase['phase-type'] !== 'FINALIZING' &&
-            phase['phase-type'] !== 'UPLOAD_ARTIFACTS' &&
-            phase['phase-type'] !== 'COMPLETED'
-        )
-        .map(phase => {
-          if (phase['duration-in-seconds'] !== undefined) {
-            return `${
-              phase['phase-status'] === 'SUCCEEDED'
-                ? ':white_check_mark:'
-                : ':x:'
-              } ${PHASE_MAP_TO_REAL[phase['phase-type']]} (${timeString(
-                phase['duration-in-seconds'],
-              )})`;
-          }
-          return `:building_construction: ${PHASE_MAP_TO_REAL[phase['phase-type']]}`;
-        })
-        .join(' ');
+            phase['phase-type'] == 'SUBMITTED' ||
+            phase['phase-type'] == 'PROVISIONING' ||
+            phase['phase-type'] == 'DOWNLOAD_SOURCE' ||
+            phase['phase-type'] == 'INSTALL' ||
+            phase['phase-type'] == 'PRE_BUILD'
+        );
+      const endPhases = phases
+        .filter(
+          phase =>
+            phase['phase-type'] == 'UPLOAD_ARTIFACTS' ||
+            phase['phase-type'] == 'FINALIZING' ||
+            phase['phase-type'] == 'COMPLETED'
+        );
 
-      if (totalEndSeconds > 0) {
+      console.log(JSON.stringify(startPhases));
+      console.log(JSON.stringify(endPhases));
+
+      const totalStartSeconds = startPhases
+        .map(phase => phase['duration-in-seconds'] !== undefined ? 0 : phase['duration-in-seconds'])
+        .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0;
+
+      const startSucceeded = startPhases
+        .map(phase => phase['phase-status'])
+        .every(hasSucceeded) || false;
+
+      console.log(totalStartSeconds, startSucceeded)
+
+      const totalEndSeconds = endPhases
+        .map(phase => phase['duration-in-seconds'] !== undefined ? 0 : phase['duration-in-seconds'])
+        .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0;
+
+      const endSucceeded = endPhases
+        .map(phase => phase['phase-status'])
+        .every(hasSucceeded) || false;
+
+      console.log(totalEndSeconds, endSucceeded)
+
+      var resultText = '';
+
+      resultText += (totalStartSeconds > 0 && startPhases.length == 5) ? `${
+        startSucceeded ? ':white_check_mark:' : ':x:'
+        } SETUP (${timeString(totalStartSeconds)})` : `:building_construction: SETUP`;
+
+      console.log(1, "resultText", resultText);
+
+      if (totalStartSeconds > 0 && startPhases.length == 5 && startSucceeded) {
         resultText += ' ';
-        resultText += totalEndSeconds > 0 && endPhases.length == 3 ? `${
-          endSucceeded ? ':white_check_mark:' : ':x:'
-          } FINAL (${timeString(totalEndSeconds)})` : `:building_construction: FINAL`;
+        resultText += phases
+          .filter(
+            phase =>
+              phase['phase-type'] !== 'SUBMITTED' &&
+              phase['phase-type'] !== 'PROVISIONING' &&
+              phase['phase-type'] !== 'DOWNLOAD_SOURCE' &&
+              phase['phase-type'] !== 'INSTALL' &&
+              phase['phase-type'] !== 'PRE_BUILD' &&
+              phase['phase-type'] !== 'FINALIZING' &&
+              phase['phase-type'] !== 'UPLOAD_ARTIFACTS' &&
+              phase['phase-type'] !== 'COMPLETED'
+          )
+          .map(phase => {
+            if (phase['duration-in-seconds'] !== undefined) {
+              return `${
+                phase['phase-status'] === 'SUCCEEDED'
+                  ? ':white_check_mark:'
+                  : ':x:'
+                } ${PHASE_MAP_TO_REAL[phase['phase-type']]} (${timeString(
+                  phase['duration-in-seconds'],
+                )})`;
+            }
+            return `:building_construction: ${PHASE_MAP_TO_REAL[phase['phase-type']]}`;
+          })
+          .join(' ');
+        console.log(2, "resultText", resultText);
+
+        if (totalEndSeconds > 0) {
+          resultText += ' ';
+          resultText += (totalEndSeconds > 0 && endPhases.length == 3) ? `${
+            endSucceeded ? ':white_check_mark:' : ':x:'
+            } FINAL (${timeString(totalEndSeconds)})` : `:building_construction: FINAL`;
+        }
       }
+
+      console.log(3, "resultText", resultText);
+
+      return {
+        fallback: `Current phase: ${phases[phases.length - 1]['phase-type']}`,
+        text: resultText,
+        title: 'Stages',
+      };
     }
 
     return {
-      fallback: `Current phase: ${phases[phases.length - 1]['phase-type']}`,
-      text: resultText,
+      fallback: `not started yet`,
+      text: '',
       title: 'Stages',
     };
+  } catch (e) {
+    throw new Error(`Failed building phases: ${e.message}`)
   }
-  return {
-    fallback: `not started yet`,
-    text: '',
-    title: 'Stages',
-  };
 };
 
 // Construct the build message
@@ -403,13 +420,7 @@ const buildEventToMessage = (
           ...(event.detail['additional-information'].phases || [])
             .filter(
               phase =>
-                phase['phase-status'] != null &&
-                phase['phase-type'] !== 'SUBMITTED' &&
-                phase['phase-type'] !== 'FINALIZING' &&
-                phase['phase-type'] !== 'UPLOAD_ARTIFACTS' &&
-                phase['phase-type'] !== 'PROVISIONING' &&
-                phase['phase-type'] !== 'DOWNLOAD_SOURCE' &&
-                phase['phase-type'] !== 'COMPLETED'
+                phase['phase-status'] != null
             )
             .map(phase => ({
               short: false,
