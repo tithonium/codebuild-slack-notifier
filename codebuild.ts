@@ -36,7 +36,7 @@ export type CodeBuildStatus =
   | 'CLIENT_ERROR';
 
 const PHASE_MAP_TO_REAL = {
-  'QUEUED': "START",
+  'QUEUED': "IDLE",
   'SUBMITTED': "START",
   'PROVISIONING': "SUPPLY",
   'DOWNLOAD_SOURCE': "SOURCE",
@@ -232,30 +232,33 @@ const gitRevision = (event: CodeBuildEvent): string => {
   return event.detail['additional-information']['source-version'] || 'unknown';
 };
 
-async function downloadCommitLog(commitId: string | undefined) {
-  if (!commitId) return '<commit log not found>';
+const s3DownloadRetry = async (commitId, n) => {
+  console.log("Attempting to download file from S3 ...")
   const params = {
     Bucket: S3_SLACK_COMMIT_BUCKET || '',
     Key: `commits/${commitId}.log`
+  };
+  const start = Date.now();
+  for (let i = 1; i < n; i++) {
+    try {
+      console.log(`S3 Attempt ${i} of ${n} | seconds elapsed - ${Math.floor((Date.now() - start) / 1000)}`);
+      const data = await s3.getObject(params).promise();
+      const body = data.Body || '';
+      return body.toString();
+    } catch (err) {
+      const isLastAttempt = i + 1 === n;
+      if (isLastAttempt) throw err;
+      const t = await new Promise(resolve => setTimeout(resolve, 5000));
+    }
   }
-  try {
-    const data = await s3.getObject(params).promise();
-    const body = data.Body || '';
-    return body.toString();
-  } catch (e) {
-    const t = await new Promise(resolve => setTimeout(resolve, 65000));
-    const data = await s3.getObject(params).promise();
-    const body = data.Body || '';
-    return body.toString();
-  }
-}
+};
 
 function eventToCommitId(event: CodeBuildEvent) {
   return event.detail['additional-information']['source-version'];
 }
 
 // Git revision, possibly with URL
-const gitDetails = function (commitLog: string) {
+const gitDetails = function (commitLog) {
   return commitLog;
 };
 
@@ -263,100 +266,91 @@ function hasSucceeded(status) {
   return status === 'SUCCEEDED';
 }
 
+function phaseName(phase) {
+  return PHASE_MAP_TO_REAL[phase] || phase;
+}
+
 export const buildPhaseAttachment = (
   event: CodeBuildEvent,
 ): MessageAttachment => {
-    const phases = event.detail['additional-information'].phases;
-    if (phases) {
-      const startPhases = phases
-        .filter(
-          phase =>
-            phase['phase-type'] == 'QUEUED' ||
-            phase['phase-type'] == 'SUBMITTED' ||
+  const phases = event.detail['additional-information'].phases;
+  if (phases) {
+    const startPhases = phases
+      .filter(
+        phase =>
+          (phase['phase-type'] == 'SUBMITTED' ||
             phase['phase-type'] == 'PROVISIONING' ||
             phase['phase-type'] == 'DOWNLOAD_SOURCE' ||
             phase['phase-type'] == 'INSTALL' ||
-            phase['phase-type'] == 'PRE_BUILD'
-        );
-      const endPhases = phases
-        .filter(
-          phase =>
-            phase['phase-type'] == 'UPLOAD_ARTIFACTS' ||
-            phase['phase-type'] == 'FINALIZING' ||
-            phase['phase-type'] == 'COMPLETED'
-        );
+            phase['phase-type'] == 'PRE_BUILD' ||
+            phase['phase-type'] == 'QUEUED') &&
+          phase['phase-status']
 
-      const totalStartSeconds = startPhases
-        .map(phase => phase['duration-in-seconds'] !== undefined ? phase['duration-in-seconds'] : 0)
-        .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0;
+      );
+    // const endPhases = phases
+    //   .filter(
+    //     phase =>
+    //       (phase['phase-type'] == 'UPLOAD_ARTIFACTS' ||
+    //         phase['phase-type'] == 'FINALIZING' ||
+    //         phase['phase-type'] == 'COMPLETED') &&
+    //       phase['phase-status']
+    //   );
 
-      const startSucceeded = startPhases
-        .map(phase => phase['phase-status'])
-        .every(hasSucceeded) || false;
+    const totalStartSeconds = startPhases
+      .map(phase => phase['duration-in-seconds'] !== undefined ? phase['duration-in-seconds'] : 0)
+      .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0;
 
-      const totalEndSeconds = endPhases
-        .map(phase => phase['duration-in-seconds'] !== undefined ? phase['duration-in-seconds'] : 0)
-        .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0;
+    const startSucceeded = startPhases
+      .map(phase => phase['phase-status'] || "SUCCEEDED")
+      .every(hasSucceeded) || false;
 
-      const endSucceeded = endPhases
-        .map(phase => phase['phase-status'])
-        .every(hasSucceeded) || false;
+    // const totalEndSeconds = endPhases
+    //   .map(phase => phase['duration-in-seconds'] !== undefined ? phase['duration-in-seconds'] : 0)
+    //   .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0;
 
-      var resultText = '';
+    // const endSucceeded = endPhases
+    //   .map(phase => phase['phase-status'])
+    //   .every(hasSucceeded) || false;
 
-      resultText += (totalStartSeconds > 0 && startPhases.length == 5) ? `${
-        startSucceeded ? ':white_check_mark:' : ':x:'
-        } SETUP (${timeString(totalStartSeconds)})` : `:building_construction: SETUP`;
+    var resultText = '';
 
-      if (totalStartSeconds > 0 && startPhases.length >= 5 && startSucceeded) {
-        resultText += ' ';
-        resultText += phases
-          .filter(
-            phase =>
-              phase['phase-type'] !== 'QUEUED' &&
-              phase['phase-type'] !== 'SUBMITTED' &&
-              phase['phase-type'] !== 'PROVISIONING' &&
-              phase['phase-type'] !== 'DOWNLOAD_SOURCE' &&
-              phase['phase-type'] !== 'INSTALL' &&
-              phase['phase-type'] !== 'PRE_BUILD' &&
-              phase['phase-type'] !== 'FINALIZING' &&
-              phase['phase-type'] !== 'UPLOAD_ARTIFACTS' &&
-              phase['phase-type'] !== 'COMPLETED'
-          )
-          .map(phase => {
-            if (phase['duration-in-seconds'] !== undefined) {
-              return `${
-                phase['phase-status'] === 'SUCCEEDED'
-                  ? ':white_check_mark:'
-                  : ':x:'
-                } ${PHASE_MAP_TO_REAL[phase['phase-type']]} (${timeString(
-                  phase['duration-in-seconds'],
-                )})`;
-            }
-            return `:building_construction: ${PHASE_MAP_TO_REAL[phase['phase-type']]}`;
-          })
-          .join(' ');
+    resultText += (totalStartSeconds > 0 && startPhases.length >= 5) ? `${
+      startSucceeded ? ':white_check_mark:' : ':x:'
+      } SETUP (${timeString(totalStartSeconds)})` : `:building_construction: SETUP`;
 
-        if (totalEndSeconds > 0) {
-          resultText += ' ';
-          resultText += (totalEndSeconds > 0 && endPhases.length >= 3) ? `${
-            endSucceeded ? ':white_check_mark:' : ':x:'
-            } FINAL (${timeString(totalEndSeconds)})` : `:building_construction: FINAL`;
+    resultText += ' ';
+    resultText += phases
+      .filter(
+        phase =>
+          phase['phase-type'] === 'BUILD' ||
+          phase['phase-type'] === 'POST_BUILD'
+      )
+      .map(phase => {
+        if (phase['duration-in-seconds'] !== undefined) {
+          return `${
+            phase['phase-status'] === 'SUCCEEDED'
+              ? ':white_check_mark:'
+              : ':x:'
+            } ${phaseName(phase['phase-type'])} (${timeString(
+              phase['duration-in-seconds'],
+            )})`;
         }
-      }
-
-      return {
-        fallback: `Current phase: ${phases[phases.length - 1]['phase-type']}`,
-        text: resultText,
-        title: 'Build Phases',
-      };
-    }
+        return `:building_construction: ${phaseName(phase['phase-type'])}`;
+      })
+      .join(' ');
 
     return {
-      fallback: `not started yet`,
-      text: '',
+      fallback: `Current phase: ${phases[phases.length - 1]['phase-type']}`,
+      text: resultText,
       title: 'Build Phases',
     };
+  }
+
+  return {
+    fallback: `not started yet`,
+    text: '',
+    title: 'Build Phases',
+  };
 };
 
 // Construct the build message
@@ -404,20 +398,21 @@ const buildEventToMessage = (
             title: 'Details',
             value: gitDetails(commitLog),
           },
-          // ...(event.detail['additional-information'].phases || [])
-          //   .filter(
-          //     phase =>
-          //       phase['phase-status'] != null
-          //   )
-          //   .map(phase => ({
-          //     short: false,
-          //     title: `Phase ${phase[
-          //       'phase-type'
-          //     ].toLowerCase()} ${buildStatusToText(
-          //       event.detail['build-status'],
-          //     )}`,
-          //     value: (phase['phase-context'] || []).join('\n'),
-          //   })),
+          ...(event.detail['additional-information'].phases || [])
+          .filter(
+            phase =>
+              phase['phase-status'] != null &&
+              phase['phase-status'] !== 'SUCCEEDED',
+          )
+          .map(phase => ({
+            short: false,
+            title: `Phase ${phase[
+              'phase-type'
+            ].toLowerCase()} ${buildStatusToText(
+              event.detail['build-status'],
+            )}`,
+            value: (phase['phase-context'] || []).join('\n'),
+          })),
         ],
         footer: buildId(event),
         text: completeText,
@@ -452,17 +447,16 @@ const buildEventToMessage = (
   ];
 };
 
-
 // Handle the event for one channel
 export const handleCodeBuildEvent = async (
   event: CodeBuildEvent,
   slack: WebClient,
   channel: Channel,
 ): Promise<MessageResult | void> => {
-  const commitId = eventToCommitId(event);
-  const commitLog = await downloadCommitLog(commitId);
   // State change event
   if (event['detail-type'] === 'CodeBuild Build State Change') {
+    const commitId = eventToCommitId(event);
+    const commitLog = await s3DownloadRetry(commitId, 15);
     if (event.detail['additional-information']['build-complete']) {
       const stateMessage = await findMessageForId(
         slack,
@@ -485,7 +479,6 @@ export const handleCodeBuildEvent = async (
     }) as Promise<MessageResult>;
   }
   // Phase change event
-
   const message = await findMessageForId(slack, channel.id, buildId(event));
   if (message) {
     return slack.chat.update({

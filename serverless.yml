@@ -14,11 +14,11 @@ provider:
   stage: ${opt:stage, 'tools'}
   memorySize: 128
   runtime: nodejs8.10
-  timeout: 120
+  timeout: 300
   region: ${opt:region, 'us-west-2'}
   environment:
     DEBUG: ${self:custom.env.DEBUG, 'true'}
-    TRACE: ${self:custom.env.TRACE, 'false'}
+    TRACE: ${self:custom.env.TRACE, 'true'}
     STAGE: ${self:provider.stage}
     REGION: ${self:provider.region}
     VERSION: ${self:custom.package.version}
