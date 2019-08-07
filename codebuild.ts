@@ -147,56 +147,86 @@ export interface CodeBuildPhaseEvent {
 export type CodeBuildEvent = CodeBuildStateEvent | CodeBuildPhaseEvent;
 
 export const buildStatusToColor = (status: CodeBuildStatus): string => {
-  switch (status) {
-    case 'IN_PROGRESS':
-      return '#439FE0';
-    case 'SUCCEEDED':
-      return 'good';
-    case 'TIMED_OUT':
-      return 'danger';
-    case 'STOPPED':
-      return 'danger';
-    case 'FAILED':
-      return 'danger';
-    case 'FAULT':
-      return 'warning';
-    case 'CLIENT_ERROR':
-      return 'warning';
+  try {
+    switch (status) {
+      case 'IN_PROGRESS':
+        return '#439FE0';
+      case 'SUCCEEDED':
+        return 'good';
+      case 'TIMED_OUT':
+        return 'danger';
+      case 'STOPPED':
+        return 'danger';
+      case 'FAILED':
+        return 'danger';
+      case 'FAULT':
+        return 'warning';
+      case 'CLIENT_ERROR':
+        return 'warning';
+    }
+  } catch (e) {
+    console.log(e);
+    return 'warning';
   }
 };
 
 const buildStatusToText = (status: CodeBuildStatus): string => {
-  switch (status) {
-    case 'IN_PROGRESS':
-      return 'started';
-    case 'SUCCEEDED':
-      return 'passed';
-    case 'TIMED_OUT':
-      return 'timed out';
-    case 'STOPPED':
-      return 'stopped';
-    case 'FAILED':
-      return 'failed';
-    case 'FAULT':
-      return 'errored';
-    case 'CLIENT_ERROR':
-      return 'had client error';
+  try {
+    switch (status) {
+      case 'IN_PROGRESS':
+        return 'started';
+      case 'SUCCEEDED':
+        return 'passed';
+      case 'TIMED_OUT':
+        return 'timed out';
+      case 'STOPPED':
+        return 'stopped';
+      case 'FAILED':
+        return 'failed';
+      case 'FAULT':
+        return 'errored';
+      case 'CLIENT_ERROR':
+        return 'had client error';
+    }
+  } catch (e) {
+    console.log(e);
+    return 'errored';
   }
 };
 
 export const projectLink = (event: CodeBuildEvent): string => {
-  return `<https://${
-    event.region
-    }.console.aws.amazon.com/codebuild/home?region=${event.region}#/projects/${
-    event.detail['project-name']
-    }/view|${event.detail['project-name']}>`;
+  try {
+    return `<https://${
+      event.region
+      }.console.aws.amazon.com/codebuild/home?region=${event.region}#/projects/${
+      event.detail['project-name']
+      }/view|${event.detail['project-name']}>`;
+  } catch (e) {
+    console.log(e);
+    return "null";
+  }
+
 };
 
 // Get the build ID from the Codebuild event
 export const buildId = (event: CodeBuildEvent): string => {
-  return event.detail['build-id'].split(':').slice(-1)[0];
+  try {
+    return event.detail['build-id'].split(':').slice(-1)[0];
+  } catch (e) {
+    console.log(e);
+    return "0";
+  }
+
 };
 
+export const buildARN = (event: CodeBuildEvent): string => {
+  try {
+    return event.detail['build-id'].split('/')[1];
+  } catch (e) {
+    console.log(e);
+    return "0";
+  }
+}
 // Convert seconds to minutes + seconds
 export const timeString = (seconds: number | undefined): string => {
   const minute = 60;
@@ -210,7 +240,7 @@ export const timeString = (seconds: number | undefined): string => {
 
 // Git revision, possibly with URL
 const gitRevision = (event: CodeBuildEvent): string => {
-  try{
+  try {
     if (event.detail['additional-information'].source.type === 'GITHUB') {
       const sourceVersion =
         event.detail['additional-information']['source-version'];
@@ -231,19 +261,20 @@ const gitRevision = (event: CodeBuildEvent): string => {
       return `<${githubProjectUrl}/tree/${sourceVersion}|${sourceVersion}>`;
     }
     return event.detail['additional-information']['source-version'] || 'unknown';
-  }catch(e){
+  } catch (e) {
     console.log(e);
   }
 };
 
-async function getObject (handle) {
+async function getObject(handle) {
   try {
     console.log(handle.Key)
     const data = await s3.getObject(handle).promise();
 
     return data.Body.toString('utf-8');
   } catch (e) {
-    throw new Error(`Could not retrieve file from S3: ${e.message}`)
+    console.log(e);
+    return "";
   }
 }
 
@@ -272,78 +303,97 @@ function phaseName(phase) {
   return PHASE_MAP_TO_REAL[phase] || phase;
 }
 
+function additionalInformation(event, key) {
+  try {
+    return event.detail['additional-information'][key];
+  } catch (e) {
+    console.log(e);
+    return "";
+  }
+}
+
 export const buildPhaseAttachment = (
   event: CodeBuildEvent,
 ): MessageAttachment => {
-  const phases = event.detail['additional-information'].phases;
-  if (phases) {
-    const startPhases = phases
-      .filter(
-        phase =>
-          (phase['phase-type'] == 'SUBMITTED' ||
-            phase['phase-type'] == 'PROVISIONING' ||
-            phase['phase-type'] == 'DOWNLOAD_SOURCE' ||
-            phase['phase-type'] == 'INSTALL' ||
-            phase['phase-type'] == 'PRE_BUILD' ||
-            phase['phase-type'] == 'QUEUED') &&
-          phase['phase-status']
+  try {
+    const phases = additionalInformation(event, "phases");
+    if (phases) {
+      const startPhases = phases
+        .filter(
+          phase =>
+            (phase['phase-type'] == 'SUBMITTED' ||
+              phase['phase-type'] == 'PROVISIONING' ||
+              phase['phase-type'] == 'DOWNLOAD_SOURCE' ||
+              phase['phase-type'] == 'INSTALL' ||
+              phase['phase-type'] == 'PRE_BUILD' ||
+              phase['phase-type'] == 'QUEUED') &&
+            phase['phase-status']
 
-      );
-    // const endPhases = phases
-    //   .filter(
-    //     phase =>
-    //       (phase['phase-type'] == 'UPLOAD_ARTIFACTS' ||
-    //         phase['phase-type'] == 'FINALIZING' ||
-    //         phase['phase-type'] == 'COMPLETED') &&
-    //       phase['phase-status']
-    //   );
+        );
+      // const endPhases = phases
+      //   .filter(
+      //     phase =>
+      //       (phase['phase-type'] == 'UPLOAD_ARTIFACTS' ||
+      //         phase['phase-type'] == 'FINALIZING' ||
+      //         phase['phase-type'] == 'COMPLETED') &&
+      //       phase['phase-status']
+      //   );
 
-    const totalStartSeconds = startPhases
-      .map(phase => phase['duration-in-seconds'] !== undefined ? phase['duration-in-seconds'] : 0)
-      .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0;
+      const totalStartSeconds = startPhases
+        .map(phase => phase['duration-in-seconds'] !== undefined ? phase['duration-in-seconds'] : 0)
+        .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0;
 
-    const startSucceeded = startPhases
-      .map(phase => phase['phase-status'] || "SUCCEEDED")
-      .every(hasSucceeded) || false;
+      const startSucceeded = startPhases
+        .map(phase => phase['phase-status'] || "SUCCEEDED")
+        .every(hasSucceeded) || false;
 
-    // const totalEndSeconds = endPhases
-    //   .map(phase => phase['duration-in-seconds'] !== undefined ? phase['duration-in-seconds'] : 0)
-    //   .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0;
+      // const totalEndSeconds = endPhases
+      //   .map(phase => phase['duration-in-seconds'] !== undefined ? phase['duration-in-seconds'] : 0)
+      //   .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0;
 
-    // const endSucceeded = endPhases
-    //   .map(phase => phase['phase-status'])
-    //   .every(hasSucceeded) || false;
+      // const endSucceeded = endPhases
+      //   .map(phase => phase['phase-status'])
+      //   .every(hasSucceeded) || false;
 
-    var resultText = '';
+      var resultText = '';
 
-    resultText += (totalStartSeconds > 0 && startPhases.length >= 5) ? `${
-      startSucceeded ? ':white_check_mark:' : ':x:'
-      } SETUP (${timeString(totalStartSeconds)})` : `:building_construction: SETUP`;
+      resultText += (totalStartSeconds > 0 && startPhases.length >= 5) ? `${
+        startSucceeded ? ':white_check_mark:' : ':x:'
+        } SETUP (${timeString(totalStartSeconds)})` : `:building_construction: SETUP`;
 
-    resultText += ' ';
-    resultText += phases
-      .filter(
-        phase =>
-          phase['phase-type'] === 'BUILD' ||
-          phase['phase-type'] === 'POST_BUILD'
-      )
-      .map(phase => {
-        if (phase['duration-in-seconds'] !== undefined) {
-          return `${
-            phase['phase-status'] === 'SUCCEEDED'
-              ? ':white_check_mark:'
-              : ':x:'
-            } ${phaseName(phase['phase-type'])} (${timeString(
-              phase['duration-in-seconds'],
-            )})`;
-        }
-        return `:building_construction: ${phaseName(phase['phase-type'])}`;
-      })
-      .join(' ');
+      resultText += ' ';
+      resultText += phases
+        .filter(
+          phase =>
+            phase['phase-type'] === 'BUILD' ||
+            phase['phase-type'] === 'POST_BUILD'
+        )
+        .map(phase => {
+          if (phase['duration-in-seconds'] !== undefined) {
+            return `${
+              phase['phase-status'] === 'SUCCEEDED'
+                ? ':white_check_mark:'
+                : ':x:'
+              } ${phaseName(phase['phase-type'])} (${timeString(
+                phase['duration-in-seconds'],
+              )})`;
+          }
+          return `:building_construction: ${phaseName(phase['phase-type'])}`;
+        })
+        .join(' ');
 
+      return {
+        fallback: `Current phase: ${phases[phases.length - 1]['phase-type']}`,
+        text: resultText,
+        title: 'Build Phases',
+      };
+    }
+
+  } catch (e) {
+    console.log(e);
     return {
-      fallback: `Current phase: ${phases[phases.length - 1]['phase-type']}`,
-      text: resultText,
+      fallback: `not started yet`,
+      text: '',
       title: 'Build Phases',
     };
   }
@@ -362,17 +412,17 @@ const buildEventToMessage = (
   commitTestResults: any
 ): MessageAttachment[] => {
   const startTime = Date.parse(
-    event.detail['additional-information']['build-start-time'],
+    additionalInformation(event, 'build-start-time'),
   );
 
   // URL to the Codebuild view for the build
   const buildUrl = `https://${
     event.region
     }.console.aws.amazon.com/codebuild/home?region=${event.region}#/builds/${
-    event.detail['build-id'].split('/')[1]
+    buildARN(event)
     }/view/new`;
 
-  if (event.detail['additional-information']['build-complete']) {
+  if (additionalInformation(event, 'build-complete')) {
     const minute = 60;
     const msInS = 1000;
     const endTime = Date.parse(event.time);
@@ -380,12 +430,11 @@ const buildEventToMessage = (
     const minutes = Math.floor(elapsedTime / minute / msInS);
     const seconds = Math.floor(elapsedTime / msInS - minutes * minute);
 
-    const completeText = `<${buildUrl}|Build> of ${projectLink(
-      event,
-    )} ${buildStatusToText(event.detail['build-status'])} after ${
+    const completeText = `<${buildUrl}|Build> of ${projectLink(event)} ${buildStatusToText(event.detail['build-status'])} after ${
       minutes ? `${minutes} min ` : ''
       }${seconds ? `${seconds} sec` : ''}`;
 
+    console.log("Completed text:", completeText);
     return [
       {
         color: buildStatusToColor(event.detail['build-status']),
@@ -401,7 +450,7 @@ const buildEventToMessage = (
             title: 'Details',
             value: gitDetails(commitLog),
           },
-          ...(event.detail['additional-information'].phases || [])
+          ...(additionalInformation(event, "phases") || [])
             .filter(
               phase =>
                 phase['phase-status'] != null &&
@@ -460,7 +509,7 @@ export const handleCodeBuildEvent = async (
       ~~ State Changed ~~
       Current Phase: ${event.detail["current-phase"]}
       Build Status: ${event.detail["build-status"]}
-      Build Completed: ${event.detail["additional-information"]["build-complete"]}
+      Build Completed: ${additionalInformation("build-complete")}
     `);
     const commitId = eventToCommitId(event);
     const gitHandle = s3Handle(commitId, "git-details.txt");
@@ -468,8 +517,8 @@ export const handleCodeBuildEvent = async (
     let commitLog = await getObject(gitHandle);
 
     console.log("commitLog", commitLog)
-    
-    if (event.detail['additional-information']['build-complete']) {
+
+    if (additionalInformation(event, 'build-complete')) {
       console.log("Before download spec-failed.txt");
       const specHandle = s3Handle(commitId, "spec-failed.txt");
       const commitTestResults = await getObject(specHandle);
@@ -508,10 +557,10 @@ export const handleCodeBuildEvent = async (
     ~~ Phase Changed ~~
     Completed Phase: ${event.detail["completed-phase"]}
     Completed Phase Status: ${event.detail["completed-phase-status"]}
-    Build Completed: ${event.detail["additional-information"]["build-complete"]}
+    Build Completed: ${additionalInformation(event, "build-complete")}
   `);
   const message = await findMessageForId(slack, channel.id, buildId(event));
-  console.log(JSON.stringify(message));
+  console.log('after findMessageForId');
   if (message) {
     return slack.chat.update({
       attachments: updateOrAddAttachment(
