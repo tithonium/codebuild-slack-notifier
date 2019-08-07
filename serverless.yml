@@ -46,7 +46,18 @@ functions:
               - 'aws.codebuild'
             detail-type:
               - 'CodeBuild Build State Change'
+      - cloudwatchEvent:
+          event:
+            source:
+              - 'aws.codebuild'
+            detail-type:
               - 'CodeBuild Build Phase Change'
+            detail:
+              completed-phase:
+                - 'PRE_BUILD'
+                - 'BUILD'
+                - 'POST_BUILD'
+                - 'FINALIZING'
       - cloudwatchEvent:
           event:
             source:

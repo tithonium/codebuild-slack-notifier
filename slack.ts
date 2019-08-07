@@ -178,7 +178,7 @@ export const findMessages = async (
 ): Promise<Message[]> => {
   const messages = (await slack.channels.history({
     channel,
-    count: 20,
+    count: 5,
   })) as ChannelHistoryResult;
 
   return messages.messages;
@@ -190,21 +190,26 @@ export const findMessageForId = async (
   channel: string,
   id: string,
 ): Promise<Message | undefined> => {
-  // If the message is cached, return it
-  const cachedMessage = messageCache.get([channel, id].join(':'));
-  if (cachedMessage) {
-    console.log('found cached message', cachedMessage);
-    return cachedMessage;
+  try{
+    // If the message is cached, return it
+    const cachedMessage = messageCache.get([channel, id].join(':'));
+    if (cachedMessage) {
+      console.log('found cached message', cachedMessage);
+      return cachedMessage;
+    }
+
+    // If not in cache, search history for it
+    return (await findMessages(slack, channel)).find(message => {
+      if (message.attachments == null) {
+        return false;
+      }
+      if (message.attachments.find(att => att.footer === id)) {
+        return true;
+      }
+      return false;
+    });
+  }catch(e){
+    console.log(e);
   }
 
-  // If not in cache, search history for it
-  return (await findMessages(slack, channel)).find(message => {
-    if (message.attachments == null) {
-      return false;
-    }
-    if (message.attachments.find(att => att.footer === id)) {
-      return true;
-    }
-    return false;
-  });
 };

@@ -11,7 +11,7 @@
     "lint": "tslint --project .",
     "deploy": "serverless deploy",
     "sls": "sls",
-    "logs:tools:PostUpdateToSlack": "sls logs -f PostUpdateToSlack --region eu-west-1 --stage tools --startTime 10m -t"
+    "logs:tools:PostUpdateToSlack": "sls logs -f PostUpdateToSlack --region us-west-2 --stage tools --startTime 10m -t"
   },
   "dependencies": {
     "@slack/web-api": "^5.1.0",

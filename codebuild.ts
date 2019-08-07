@@ -210,48 +210,47 @@ export const timeString = (seconds: number | undefined): string => {
 
 // Git revision, possibly with URL
 const gitRevision = (event: CodeBuildEvent): string => {
-  if (event.detail['additional-information'].source.type === 'GITHUB') {
-    const sourceVersion =
-      event.detail['additional-information']['source-version'];
-    if (sourceVersion === undefined) {
-      return 'unknown';
+  try{
+    if (event.detail['additional-information'].source.type === 'GITHUB') {
+      const sourceVersion =
+        event.detail['additional-information']['source-version'];
+      if (sourceVersion === undefined) {
+        return 'unknown';
+      }
+      const githubProjectUrl = event.detail['additional-information'].source.location.slice(0, -('.git'.length));
+      // PR
+      const pr = sourceVersion.match(/^pr\/(\d+)/);
+      if (pr) {
+        return `<${githubProjectUrl}/pull/${pr[1]}|Pull request #${pr[1]}>`;
+      }
+      // Commit (a commit sha has a length of 40 chars)
+      if (sourceVersion.length === 40) { // tslint:disable-line:no-magic-numbers
+        return `<${githubProjectUrl}/commit/${sourceVersion}|${sourceVersion.slice(0, 8)}>`;
+      }
+      // Branch
+      return `<${githubProjectUrl}/tree/${sourceVersion}|${sourceVersion}>`;
     }
-    const githubProjectUrl = event.detail['additional-information'].source.location.slice(0, -('.git'.length));
-    // PR
-    const pr = sourceVersion.match(/^pr\/(\d+)/);
-    if (pr) {
-      return `<${githubProjectUrl}/pull/${pr[1]}|Pull request #${pr[1]}>`;
-    }
-    // Commit (a commit sha has a length of 40 chars)
-    if (sourceVersion.length === 40) { // tslint:disable-line:no-magic-numbers
-      return `<${githubProjectUrl}/commit/${sourceVersion}|${sourceVersion.slice(0, 8)}>`;
-    }
-    // Branch
-    return `<${githubProjectUrl}/tree/${sourceVersion}|${sourceVersion}>`;
+    return event.detail['additional-information']['source-version'] || 'unknown';
+  }catch(e){
+    console.log(e);
   }
-  return event.detail['additional-information']['source-version'] || 'unknown';
+};
+const getObject = (handle) => {
+  console.log(JSON.stringify(handle));
+  return new Promise((resolve, reject) => {
+    s3.getObject(handle, (err, data) => {
+      if (err) reject(err)
+      else resolve(data.Body)
+    })
+  })
 };
 
-const s3DownloadRetry = async (commitId, file, n) => {
-  console.log(`Attempting to download ${commitId}/${file} from S3 ...`);
-  const params = {
-    Bucket: S3_SLACK_COMMIT_BUCKET || '',
-    Key: `commits/${commitId}/${file}`
+const s3Handle = (commitId, fileName) => {
+  return {
+    Bucket: S3_SLACK_COMMIT_BUCKET,
+    Key: `commits/${commitId}/${fileName}`
   };
-  const start = Date.now();
-  for (let i = 1; i < n; i++) {
-    try {
-      console.log(`S3 Attempt ${i} of ${n} | seconds elapsed - ${Math.floor((Date.now() - start) / 1000)}`);
-      const data = await s3.getObject(params).promise();
-      const body = data.Body || '';
-      return body.toString();
-    } catch (err) {
-      const isLastAttempt = i + 1 === n;
-      if (isLastAttempt) throw err;
-      const t = await new Promise(resolve => setTimeout(resolve, 5000));
-    }
-  }
-};
+}
 
 function eventToCommitId(event: CodeBuildEvent) {
   return event.detail['additional-information']['source-version'];
@@ -454,16 +453,37 @@ export const handleCodeBuildEvent = async (
 ): Promise<MessageResult | void> => {
   // State change event
   if (event['detail-type'] === 'CodeBuild Build State Change') {
+    console.log(`
+      ~~ State Changed ~~
+      Current Phase: ${event.detail["current-phase"]}
+      Build Status: ${event.detail["build-status"]}
+      Build Completed: ${event.detail["additional-information"]["build-complete"]}
+    `);
     const commitId = eventToCommitId(event);
-    const commitLog = await s3DownloadRetry(commitId, "git-details.txt", 15);
+    const gitHandle = s3Handle(commitId, "git-details.txt");
+
+    var commitLog = await getObject(gitHandle);
+    try{
+      commitLog = commitLog.toString();
+    }catch(e){
+      console.log(e);
+    }
+
+    console.log("commitLog", commitLog)
+    
     if (event.detail['additional-information']['build-complete']) {
-      const commitTestResults = await s3DownloadRetry(commitId, "spec-failed.txt", 5);
+      console.log("Before download spec-failed.txt");
+      const specHandle = s3Handle(commitId, "spec-failed.txt");
+      const commitTestResults = await getObject(specHandle);
       const stateMessage = await findMessageForId(
         slack,
         channel.id,
         buildId(event),
       );
       if (stateMessage) {
+        console.log(`
+          Slack State Message: ${stateMessage}
+        `);
         return slack.chat.update({
           attachments: buildEventToMessage(event, commitLog, commitTestResults),
           channel: channel.id,
@@ -471,15 +491,29 @@ export const handleCodeBuildEvent = async (
           ts: stateMessage.ts,
         }) as Promise<MessageResult>;
       }
+      console.log('Slack state message is empty!');
     }
+
+    console.log(`Posting new message to Slack --
+      ${commitLog}
+    `);
+
     return slack.chat.postMessage({
-      attachments: buildEventToMessage(event, commitLog, null),
+      attachments: buildEventToMessage(event, commitLog, ""),
       channel: channel.id,
       text: '',
     }) as Promise<MessageResult>;
   }
   // Phase change event
+
+  console.log(`
+    ~~ Phase Changed ~~
+    Completed Phase: ${event.detail["completed-phase"]}
+    Completed Phase Status: ${event.detail["completed-phase-status"]}
+    Build Completed: ${event.detail["additional-information"]["build-complete"]}
+  `);
   const message = await findMessageForId(slack, channel.id, buildId(event));
+  console.log(JSON.stringify(message));
   if (message) {
     return slack.chat.update({
       attachments: updateOrAddAttachment(
