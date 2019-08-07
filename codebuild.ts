@@ -232,11 +232,13 @@ const gitRevision = (event: CodeBuildEvent): string => {
   return event.detail['additional-information']['source-version'] || 'unknown';
 };
 
-const s3DownloadRetry = async (commitId, n) => {
-  console.log("Attempting to download file from S3 ...")
+const s3DownloadRetry = async (commitId, n, testResults) => {
+  let key = commitId;
+  key += testResults ? '.rspec' : '.log';
+  console.log(`Attempting to download ${key} from S3 ...`);
   const params = {
     Bucket: S3_SLACK_COMMIT_BUCKET || '',
-    Key: `commits/${commitId}.log`
+    Key: `commits/${key}`
   };
   const start = Date.now();
   for (let i = 1; i < n; i++) {
@@ -353,10 +355,15 @@ export const buildPhaseAttachment = (
   };
 };
 
+// const displayException = (commitTestResults) => {
+
+// }
+
 // Construct the build message
 const buildEventToMessage = (
   event: CodeBuildStateEvent,
-  commitLog: string
+  commitLog: string,
+  commitTestResults: any
 ): MessageAttachment[] => {
   const startTime = Date.parse(
     event.detail['additional-information']['build-start-time'],
@@ -406,12 +413,10 @@ const buildEventToMessage = (
           )
           .map(phase => ({
             short: false,
-            title: `Phase ${phase[
-              'phase-type'
-            ].toLowerCase()} ${buildStatusToText(
+            title: `Phase ${phaseName(phase['phase-type'])} ${buildStatusToText(
               event.detail['build-status'],
             )}`,
-            value: (phase['phase-context'] || []).join('\n'),
+            value: commitTestResults || (phase['phase-context'] || []).join('\n'),
           })),
         ],
         footer: buildId(event),
@@ -456,8 +461,9 @@ export const handleCodeBuildEvent = async (
   // State change event
   if (event['detail-type'] === 'CodeBuild Build State Change') {
     const commitId = eventToCommitId(event);
-    const commitLog = await s3DownloadRetry(commitId, 15);
+    const commitLog = await s3DownloadRetry(commitId, 15, false);
     if (event.detail['additional-information']['build-complete']) {
+      const commitTestResults = await s3DownloadRetry(commitId, 5, true);
       const stateMessage = await findMessageForId(
         slack,
         channel.id,
@@ -465,7 +471,7 @@ export const handleCodeBuildEvent = async (
       );
       if (stateMessage) {
         return slack.chat.update({
-          attachments: buildEventToMessage(event, commitLog),
+          attachments: buildEventToMessage(event, commitLog, commitTestResults),
           channel: channel.id,
           text: '',
           ts: stateMessage.ts,
@@ -473,7 +479,7 @@ export const handleCodeBuildEvent = async (
       }
     }
     return slack.chat.postMessage({
-      attachments: buildEventToMessage(event, commitLog),
+      attachments: buildEventToMessage(event, commitLog, null),
       channel: channel.id,
       text: '',
     }) as Promise<MessageResult>;
