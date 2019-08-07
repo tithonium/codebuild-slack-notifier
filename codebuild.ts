@@ -509,7 +509,7 @@ export const handleCodeBuildEvent = async (
       ~~ State Changed ~~
       Current Phase: ${event.detail["current-phase"]}
       Build Status: ${event.detail["build-status"]}
-      Build Completed: ${additionalInformation("build-complete")}
+      Build Completed: ${additionalInformation(event, "build-complete")}
     `);
     const commitId = eventToCommitId(event);
     const gitHandle = s3Handle(commitId, "git-details.txt");

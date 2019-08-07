@@ -14,7 +14,7 @@ provider:
   stage: ${opt:stage, 'tools'}
   memorySize: 128
   runtime: nodejs8.10
-  timeout: 300
+  timeout: 15
   region: ${opt:region, 'us-west-2'}
   environment:
     DEBUG: ${self:custom.env.DEBUG, 'true'}
@@ -32,7 +32,7 @@ package:
 functions:
   PostUpdateToSlack:
     handler: index.handler
-    reservedConcurrency: 100
+    reservedConcurrency: 1
     iamRoleStatements:
       - Effect: Allow
         Action:
@@ -44,20 +44,20 @@ functions:
           event:
             source:
               - 'aws.codebuild'
-            detail-type:
-              - 'CodeBuild Build State Change'
-      - cloudwatchEvent:
-          event:
-            source:
-              - 'aws.codebuild'
-            detail-type:
-              - 'CodeBuild Build Phase Change'
-            detail:
-              completed-phase:
-                - 'PRE_BUILD'
-                - 'BUILD'
-                - 'POST_BUILD'
-                - 'FINALIZING'
+      #       detail-type:
+      #         - 'CodeBuild Build State Change'
+      # - cloudwatchEvent:
+      #     event:
+      #       source:
+      #         - 'aws.codebuild'
+      #       detail-type:
+      #         - 'CodeBuild Build Phase Change'
+      #       detail:
+      #         completed-phase:
+      #           - 'PRE_BUILD'
+      #           - 'BUILD'
+      #           - 'POST_BUILD'
+      #           - 'FINALIZING'
       - cloudwatchEvent:
           event:
             source:
