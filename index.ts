@@ -34,7 +34,7 @@ export const handler: Handler = async (
 ) => {
   try {
     const indentLevel = 2;
-    // console.log('Received event:', JSON.stringify(event, null, indentLevel));
+    console.log('Received event:', JSON.stringify(event, null, indentLevel));
 
     const projectName = getProjectName(event).split('-')[0];
 
@@ -73,7 +73,7 @@ export const handler: Handler = async (
     }
     const slack = new WebClient(token.Value);
 
-    console.log('messageCache before', messageCache);
+    //console.log('messageCache before', messageCache);
 
     // Get list of channels
     const result = (await slack.channels.list()) as ChannelsResult;
@@ -93,15 +93,15 @@ export const handler: Handler = async (
     Promise.all(requests).then(r => {
       console.log(JSON.stringify(r.filter(i => i != null), null, indentLevel));
       // Add all sent messages to the cache
-      r.forEach(m => {
-        if (m) {
-          messageCache.set([m.channel, buildId(event)].join(':'), {
-            ...m.message,
-            ts: m.ts,
-          });
-        }
-      });
-      console.log('messageCache after', messageCache);
+      // r.forEach(m => {
+      //   if (m) {
+      //     messageCache.set([m.channel, buildId(event)].join(':'), {
+      //       ...m.message,
+      //       ts: m.ts,
+      //     });
+      //   }
+      // });
+      // console.log('messageCache after', messageCache);
     });
   }
   catch (err) {

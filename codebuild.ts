@@ -235,15 +235,18 @@ const gitRevision = (event: CodeBuildEvent): string => {
     console.log(e);
   }
 };
-const getObject = (handle) => {
-  console.log(JSON.stringify(handle));
-  return new Promise((resolve, reject) => {
-    s3.getObject(handle, (err, data) => {
-      if (err) reject(err)
-      else resolve(data.Body)
-    })
-  })
-};
+
+async function getObject (handle) {
+  try {
+    console.log(handle.Key)
+    const data = await s3.getObject(handle).promise();
+
+    return data.Body.toString('utf-8');
+  } catch (e) {
+    throw new Error(`Could not retrieve file from S3: ${e.message}`)
+  }
+}
+
 
 const s3Handle = (commitId, fileName) => {
   return {
@@ -355,7 +358,7 @@ export const buildPhaseAttachment = (
 // Construct the build message
 const buildEventToMessage = (
   event: CodeBuildStateEvent,
-  commitLog: string,
+  commitLog: any,
   commitTestResults: any
 ): MessageAttachment[] => {
   const startTime = Date.parse(
@@ -462,12 +465,7 @@ export const handleCodeBuildEvent = async (
     const commitId = eventToCommitId(event);
     const gitHandle = s3Handle(commitId, "git-details.txt");
 
-    var commitLog = await getObject(gitHandle);
-    try{
-      commitLog = commitLog.toString();
-    }catch(e){
-      console.log(e);
-    }
+    let commitLog = await getObject(gitHandle);
 
     console.log("commitLog", commitLog)
     
