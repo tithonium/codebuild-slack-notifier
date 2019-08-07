@@ -271,13 +271,12 @@ async function getObject(handle) {
     console.log(handle.Key)
     const data = await s3.getObject(handle).promise();
 
-    return data.Body.toString('utf-8');
+    return data.Body.toString();
   } catch (e) {
     console.log(e);
     return "";
   }
 }
-
 
 const s3Handle = (commitId, fileName) => {
   return {
@@ -458,9 +457,7 @@ const buildEventToMessage = (
             )
             .map(phase => ({
               short: false,
-              title: `Phase ${phaseName(phase['phase-type'])} ${buildStatusToText(
-                event.detail['build-status'],
-              )}`,
+              title: failedMessage(phase['phase-type'], event.detail['build-status']),
               value: commitTestResults || (phase['phase-context'] || []).join('\n'),
             })),
         ],
@@ -471,9 +468,16 @@ const buildEventToMessage = (
     ];
   }
 
-  const text = `<${buildUrl}|Build> of ${projectLink(
-    event,
-  )} ${buildStatusToText(event.detail['build-status'])}`;
+  function failedMessage(phaseType, buildStatus){
+    switch(phaseType){
+      case 'POST_BUILD':
+        return "Tests failed";
+      default:
+        return `Phase ${phaseName(phaseType)} ${buildStatusToText(buildStatus)}`;
+    }
+  }
+
+  const text = `<${buildUrl}|Build> of ${projectLink(event)} ${buildStatusToText(event.detail['build-status'])}`;
   return [
     {
       text,

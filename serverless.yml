@@ -14,7 +14,7 @@ provider:
   stage: ${opt:stage, 'tools'}
   memorySize: 128
   runtime: nodejs8.10
-  timeout: 15
+  timeout: 30
   region: ${opt:region, 'us-west-2'}
   environment:
     DEBUG: ${self:custom.env.DEBUG, 'true'}
@@ -44,20 +44,9 @@ functions:
           event:
             source:
               - 'aws.codebuild'
-      #       detail-type:
-      #         - 'CodeBuild Build State Change'
-      # - cloudwatchEvent:
-      #     event:
-      #       source:
-      #         - 'aws.codebuild'
-      #       detail-type:
-      #         - 'CodeBuild Build Phase Change'
-      #       detail:
-      #         completed-phase:
-      #           - 'PRE_BUILD'
-      #           - 'BUILD'
-      #           - 'POST_BUILD'
-      #           - 'FINALIZING'
+            detail-type:
+              - 'CodeBuild Build State Change'
+              - 'CodeBuild Build Phase Change'
       - cloudwatchEvent:
           event:
             source:
