@@ -12,7 +12,7 @@ custom:
 provider:
   name: aws
   stage: ${opt:stage, 'tools'}
-  memorySize: 128
+  memorySize: 512
   runtime: nodejs8.10
   timeout: 30
   region: ${opt:region, 'us-west-2'}
@@ -32,7 +32,7 @@ package:
 functions:
   PostUpdateToSlack:
     handler: index.handler
-    reservedConcurrency: 1
+    reservedConcurrency: 2
     iamRoleStatements:
       - Effect: Allow
         Action:

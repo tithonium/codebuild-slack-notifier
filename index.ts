@@ -34,7 +34,7 @@ export const handler: Handler = async (
 ) => {
   try {
     const indentLevel = 2;
-    console.log('Received event:', JSON.stringify(event, null, indentLevel));
+    console.log(JSON.stringify(event, null, indentLevel));
 
     const projectName = getProjectName(event).split('-')[0];
 
@@ -46,16 +46,11 @@ export const handler: Handler = async (
       })
       .promise()).Parameter;
 
-    console.log(`notifyChannels - /codebuild-slack-notifier/${projectName}_channels`);
-    console.log(JSON.stringify(notifyChannels, null, indentLevel));
-
     if (notifyChannels === undefined || notifyChannels.Value === undefined) {
       throw new Error('Could not fetch notification channels');
     }
 
     const projectChannels = notifyChannels.Value.split(',');
-    console.log('Slack channels');
-    console.log(JSON.stringify(projectChannels, null, indentLevel));
 
     // Connect to slack
     const token = (await ssm
@@ -81,17 +76,17 @@ export const handler: Handler = async (
       // console.log(`Trying channel -> ${channel.name}`);
       if (projectChannels.find(c => c === channel.name)) {
         if (isCodePipelineEvent(event)) {
-          console.log(`Processing CodePipeline event for channel -> #${channel.name}`);
+          //console.log(`Processing CodePipeline event for channel -> #${channel.name}`);
           return handleCodePipelineEvent(event, slack, channel);
         }
-        console.log(`Processing CodeBuild event for channel -> #${channel.name}`);
-        console.log(JSON.stringify(event));
+        //console.log(`CodeBuild event for channel -> #${channel.name}`);
+        //console.log(JSON.stringify(event));
 
         return handleCodeBuildEvent(event, slack, channel);
       }
     });
     Promise.all(requests).then(r => {
-      console.log(JSON.stringify(r.filter(i => i != null), null, indentLevel));
+      //console.log(JSON.stringify(r.filter(i => i != null), null, indentLevel));
       // Add all sent messages to the cache
       // r.forEach(m => {
       //   if (m) {
@@ -102,6 +97,7 @@ export const handler: Handler = async (
       //   }
       // });
       // console.log('messageCache after', messageCache);
+      console.log('Done!')
     });
   }
   catch (err) {

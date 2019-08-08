@@ -163,6 +163,8 @@ export const buildStatusToColor = (status) => {
         return 'warning';
       case 'CLIENT_ERROR':
         return 'warning';
+      default:
+        return '#439FE0';
     }
   } catch (e) {
     console.log(e);
@@ -187,6 +189,8 @@ const buildStatusToText = (status) => {
         return 'errored';
       case 'CLIENT_ERROR':
         return 'had client error';
+      default:
+        return 'started';
     }
   } catch (e) {
     console.log(e);
@@ -266,18 +270,6 @@ const gitRevision = (event: CodeBuildEvent): string => {
   }
 };
 
-async function getObject(handle) {
-  try {
-    console.log(handle.Key)
-    const data = await s3.getObject(handle).promise();
-
-    return data.Body.toString();
-  } catch (e) {
-    console.log(e);
-    return "";
-  }
-}
-
 const s3Handle = (commitId, fileName) => {
   return {
     Bucket: S3_SLACK_COMMIT_BUCKET,
@@ -294,6 +286,28 @@ const gitDetails = function (commitLog) {
   return commitLog;
 };
 
+function formatFailures(failures) {
+
+  let lines = failures.split('\n').filter(
+    line =>
+      line == "" || line == " " || !line
+  ).map(
+    line => {
+      return `${line.split('|')[0].trim()} | FAILED`;
+    }
+  )
+  return ['```', lines, '```'].join('\n').trim();
+}
+
+function failedMessage(phaseType, buildStatus) {
+  switch (phaseType) {
+    case 'POST_BUILD':
+      return "Tests failed";
+    default:
+      return `Phase ${phaseName(phaseType)} ${buildStatusToText(buildStatus)}`;
+  }
+}
+
 function hasSucceeded(status) {
   return status === 'SUCCEEDED';
 }
@@ -305,6 +319,18 @@ function phaseName(phase) {
 function additionalInformation(event, key) {
   try {
     return event.detail['additional-information'][key];
+  } catch (e) {
+    console.log(e);
+    return "";
+  }
+}
+
+async function getObject(handle, utf8) {
+  try {
+    console.log(handle.Key)
+    const data = await s3.getObject(handle).promise();
+
+    return utf8 ? data.Body.toString('utf-8') : data.Body.toString();
   } catch (e) {
     console.log(e);
     return "";
@@ -329,14 +355,6 @@ export const buildPhaseAttachment = (
             phase['phase-status']
 
         );
-      // const endPhases = phases
-      //   .filter(
-      //     phase =>
-      //       (phase['phase-type'] == 'UPLOAD_ARTIFACTS' ||
-      //         phase['phase-type'] == 'FINALIZING' ||
-      //         phase['phase-type'] == 'COMPLETED') &&
-      //       phase['phase-status']
-      //   );
 
       const totalStartSeconds = startPhases
         .map(phase => phase['duration-in-seconds'] !== undefined ? phase['duration-in-seconds'] : 0)
@@ -345,14 +363,6 @@ export const buildPhaseAttachment = (
       const startSucceeded = startPhases
         .map(phase => phase['phase-status'] || "SUCCEEDED")
         .every(hasSucceeded) || false;
-
-      // const totalEndSeconds = endPhases
-      //   .map(phase => phase['duration-in-seconds'] !== undefined ? phase['duration-in-seconds'] : 0)
-      //   .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0;
-
-      // const endSucceeded = endPhases
-      //   .map(phase => phase['phase-status'])
-      //   .every(hasSucceeded) || false;
 
       var resultText = '';
 
@@ -433,8 +443,12 @@ const buildEventToMessage = (
       minutes ? `${minutes} min ` : ''
       }${seconds ? `${seconds} sec` : ''}`;
 
-    console.log("Completed text:", completeText);
-    return [
+    console.log("@@ Final message:", `
+      ${completeText}
+      ${commitTestResults}
+    `);
+
+    var result = [
       {
         color: buildStatusToColor(event.detail['build-status']),
         fallback: completeText,
@@ -458,7 +472,7 @@ const buildEventToMessage = (
             .map(phase => ({
               short: false,
               title: failedMessage(phase['phase-type'], event.detail['build-status']),
-              value: commitTestResults || (phase['phase-context'] || []).join('\n'),
+              value: commitTestResults
             })),
         ],
         footer: buildId(event),
@@ -466,6 +480,7 @@ const buildEventToMessage = (
       },
       buildPhaseAttachment(event),
     ];
+    return result;
   }
 
   const text = `<${buildUrl}|Build> of ${projectLink(event)} ${buildStatusToText(event.detail['build-status'])}`;
@@ -492,97 +507,95 @@ const buildEventToMessage = (
   ];
 };
 
-function failedMessage(phaseType, buildStatus) {
-  switch (phaseType) {
-    case 'POST_BUILD':
-      return "Tests failed";
-    default:
-      return `Phase ${phaseName(phaseType)} ${buildStatusToText(buildStatus)}`;
-  }
-}
-
 // Handle the event for one channel
 export const handleCodeBuildEvent = async (
   event: CodeBuildEvent,
   slack: WebClient,
   channel: Channel,
 ): Promise<MessageResult | void> => {
-  // State change event
-  const commitId = eventToCommitId(event);
-  const gitHandle = s3Handle(commitId, "git-details.txt");
 
-  let commitLog = await getObject(gitHandle);
-  const specHandle = s3Handle(commitId, "spec-failed.txt");
-  const commitTestResults = await getObject(specHandle);
+  console.log(`Event Type: ${event['detail-type']} | ${event.constructor.name}`);
 
   if (event['detail-type'] === 'CodeBuild Build State Change') {
-    console.log(`
-      ~~ State Changed ~~
-      Current Phase: ${event.detail["current-phase"]}
-      Build Status: ${event.detail["build-status"]}
-      Build Completed: ${additionalInformation(event, "build-complete")}
-    `);
+      // State change event
+      const commitId = eventToCommitId(event);
+      const gitHandle = s3Handle(commitId, "git-details.txt");
+      const specHandle = s3Handle(commitId, "spec-failed.txt");
+      const commitLog = await getObject(gitHandle, false);
+      const commitTestResults = await getObject(specHandle, true);
 
-    console.log("commitLog", commitLog)
+      let failureMsg = (commitTestResults == "" || !commitTestResults) ? null : formatFailures(commitTestResults);
+
+      console.log(`
+        Git Details: ${commitLog}
+        Errors: ${commitTestResults}
+        Failure Message: ${failureMsg}
+        Event Type: ${event['detail-type']} 
+      `);
+    console.log(`~~ [State event] ${event.detail["current-phase"]} | ${event.detail["build-status"]} | ${additionalInformation(event, "build-complete") ? "COMPLETE" : "INCOMPLETE"}`);
 
     if (additionalInformation(event, 'build-complete')) {
-
       const stateMessage = await findMessageForId(
         slack,
         channel.id,
         buildId(event),
       );
       if (stateMessage) {
-        console.log(`
-          Slack State Message: ${stateMessage}
-        `);
-        return slack.chat.update({
-          attachments: buildEventToMessage(event, commitLog, commitTestResults),
+        console.log(`Updating existing Slack message`);
+        await slack.chat.update({
+          attachments: buildEventToMessage(event, commitLog, failureMsg),
           channel: channel.id,
           text: '',
           ts: stateMessage.ts,
-        }) as Promise<MessageResult>;
+        });
+        return;
       }
-      console.log('Slack state message is empty!');
     }
 
-    console.log(`Posting new message to Slack --
-      ${commitLog}
-    `);
+    console.log(`Posting new message to Slack`);
 
-    return slack.chat.postMessage({
-      attachments: buildEventToMessage(event, commitLog, ""),
+    await slack.chat.postMessage({
+      attachments: buildEventToMessage(event, commitLog, failureMsg),
       channel: channel.id,
       text: '',
-    }) as Promise<MessageResult>;
-  }
-  // Phase change event
+    });
+  }else {
+      // State change event
+      const commitId = eventToCommitId(event);
+      const gitHandle = s3Handle(commitId, "git-details.txt");
+      const specHandle = s3Handle(commitId, "spec-failed.txt");
+      const commitLog = await getObject(gitHandle, false);
+      const commitTestResults = await getObject(specHandle, true);
 
-  console.log(`
-    ~~ Phase Changed ~~
-    Completed Phase: ${event.detail["completed-phase"]}
-    Completed Phase Status: ${event.detail["completed-phase-status"]}
-    Build Completed: ${additionalInformation(event, "build-complete")}
-  `);
-  let message = await findMessageForId(slack, channel.id, buildId(event));
-  console.log('after findMessageForId');
-  if (message) {
-    await slack.chat.update({
-      attachments: buildEventToMessage(event, commitLog, commitTestResults),
-      channel: channel.id,
-      text: '',
-      ts: message.ts,
-    })
-    message = await findMessageForId(slack, channel.id, buildId(event));
-    return slack.chat.update({
-      attachments: updateOrAddAttachment(
-        message.attachments,
-        attachment => attachment.title === 'Build Phases',
-        buildPhaseAttachment(event),
-      ),
-      channel: channel.id,
-      text: '',
-      ts: message.ts,
-    }) as Promise<MessageResult>;
+      let failureMsg = (commitTestResults == "" || !commitTestResults) ? null : formatFailures(commitTestResults);
+
+      console.log(`
+        Git Details: ${commitLog}
+        Errors: ${commitTestResults}
+        Failure Message: ${failureMsg}
+        Event Type: ${event['detail-type']} 
+      `);
+    // Phase change event
+    console.log(`~~ [Phase event] ${event.detail["completed-phase"]} | ${event.detail["completed-phase-status"]} | ${additionalInformation(event, "build-complete") ? "COMPLETE" : "INCOMPLETE"}`);
+    let message = await findMessageForId(slack, channel.id, buildId(event));
+    if (message) {
+      await slack.chat.update({
+        attachments: buildEventToMessage(event, commitLog, failureMsg),
+        channel: channel.id,
+        text: '',
+        ts: message.ts,
+      })
+      message = await findMessageForId(slack, channel.id, buildId(event));
+      await slack.chat.update({
+        attachments: updateOrAddAttachment(
+          message.attachments,
+          attachment => attachment.title === 'Build Phases',
+          buildPhaseAttachment(event),
+        ),
+        channel: channel.id,
+        text: '',
+        ts: message.ts,
+      });
+    }
   }
 };

@@ -178,7 +178,7 @@ export const findMessages = async (
 ): Promise<Message[]> => {
   const messages = (await slack.channels.history({
     channel,
-    count: 5,
+    count: 20,
   })) as ChannelHistoryResult;
 
   return messages.messages;
