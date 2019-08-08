@@ -287,16 +287,20 @@ const gitDetails = function (commitLog) {
 };
 
 function formatFailures(failures) {
-
-  let lines = failures.split('\n').filter(
-    line =>
-      line == "" || line == " " || !line
-  ).map(
-    line => {
-      return `${line.split('|')[0].trim()} | FAILED`;
-    }
-  )
-  return ['```', lines, '```'].join('\n').trim();
+  try {
+    let lines = failures.split('\n').filter(
+      line =>
+        line == "" || line == " " || !line
+    ).map(
+      line => {
+        return `${line.split('|')[0].trim()} | FAILED`;
+      }
+    )
+    return ['```', lines, '```'].join('\n').trim();
+  } catch (e) {
+    console.log(e);
+    return "";
+  }
 }
 
 function failedMessage(phaseType, buildStatus) {
@@ -517,16 +521,16 @@ export const handleCodeBuildEvent = async (
   console.log(`Event Type: ${event['detail-type']} | ${event.constructor.name}`);
 
   if (event['detail-type'] === 'CodeBuild Build State Change') {
-      // State change event
-      const commitId = eventToCommitId(event);
-      const gitHandle = s3Handle(commitId, "git-details.txt");
-      const specHandle = s3Handle(commitId, "spec-failed.txt");
-      const commitLog = await getObject(gitHandle, false);
-      const commitTestResults = await getObject(specHandle, true);
+    // State change event
+    const commitId = eventToCommitId(event);
+    const gitHandle = s3Handle(commitId, "git-details.txt");
+    const specHandle = s3Handle(commitId, "spec-failed.txt");
+    const commitLog = await getObject(gitHandle, false);
+    const commitTestResults = await getObject(specHandle, true);
 
-      let failureMsg = (commitTestResults == "" || !commitTestResults) ? null : formatFailures(commitTestResults);
+    let failureMsg = (commitTestResults == "" || !commitTestResults) ? null : formatFailures(commitTestResults);
 
-      console.log(`
+    console.log(`
         Git Details: ${commitLog}
         Errors: ${commitTestResults}
         Failure Message: ${failureMsg}
@@ -559,17 +563,17 @@ export const handleCodeBuildEvent = async (
       channel: channel.id,
       text: '',
     });
-  }else {
-      // State change event
-      const commitId = eventToCommitId(event);
-      const gitHandle = s3Handle(commitId, "git-details.txt");
-      const specHandle = s3Handle(commitId, "spec-failed.txt");
-      const commitLog = await getObject(gitHandle, false);
-      const commitTestResults = await getObject(specHandle, true);
+  } else {
+    // State change event
+    const commitId = eventToCommitId(event);
+    const gitHandle = s3Handle(commitId, "git-details.txt");
+    const specHandle = s3Handle(commitId, "spec-failed.txt");
+    const commitLog = await getObject(gitHandle, false);
+    const commitTestResults = await getObject(specHandle, true);
 
-      let failureMsg = (commitTestResults == "" || !commitTestResults) ? null : formatFailures(commitTestResults);
+    let failureMsg = (commitTestResults == "" || !commitTestResults) ? null : formatFailures(commitTestResults);
 
-      console.log(`
+    console.log(`
         Git Details: ${commitLog}
         Errors: ${commitTestResults}
         Failure Message: ${failureMsg}
