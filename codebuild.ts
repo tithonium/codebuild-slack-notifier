@@ -9,6 +9,8 @@ import * as AWS from "aws-sdk";
 
 const s3 = new AWS.S3();
 const S3_SLACK_COMMIT_BUCKET = process.env.S3_SLACK_COMMIT_BUCKET;
+const ERRORS_TO_DISPLAY = 5;
+
 /**
  * See https://docs.aws.amazon.com/codebuild/latest/userguide/sample-build-notifications.html#sample-build-notifications-ref
  */
@@ -281,9 +283,28 @@ function eventToCommitId(event: CodeBuildEvent) {
   return event.detail['additional-information']['source-version'];
 }
 
-function formatFailures(failures) {
+function linkS3Bucket(commitId, name) {
+  if (!commitId || !name) return "";
+  return `S3_SLACK_COMMIT_BUCKET/commits/${commitId}/${name}`;
+}
+
+function formatFailures(failures, commitId) {
   try {
-    if (failures == "") return failures;
+    if (failures.length <= 0) return '';
+
+    const lines = failures.slice(0, ERRORS_TO_DISPLAY).join('\n');
+    return failures.length > ERRORS_TO_DISPLAY ?
+      ['```', lines, '```', `<${linkS3Bucket(commitId, "spec-failed.txt")}|Download all ${failures.length} errors`].join('\n').trim() :
+      ['```', lines, '```'].join('\n').trim();
+  } catch (e) {
+    console.log(e);
+    return "";
+  }
+}
+
+function parseFailures(failures) {
+  try {
+    if (failures == "") return [];
 
     let lines = failures.split('\n')
       .filter(
@@ -294,18 +315,20 @@ function formatFailures(failures) {
         line => {
           return `${line.split('|')[0].trim()}`;
         }
-      ).slice(0, 5).join('\n');
-    return ['```', lines, '```'].join('\n').trim();
+      )
+    return lines;
   } catch (e) {
     console.log(e);
-    return "";
+    return [];
   }
 }
 
-function failedMessage(phaseType, buildStatus) {
+function failedMessage(phaseType, buildStatus, opts) {
+  opts = opts || {};
   switch (phaseType) {
     case 'POST_BUILD':
-      return "Tests failed";
+      if (opts.failedCount <= 0) return '';
+      return opts.failedCount > 1 ? `${opts.failedCount} tests failed` : `1 test failed`;
     default:
       return `Phase ${phaseName(phaseType)} ${buildStatusToText(buildStatus)}`;
   }
@@ -454,7 +477,7 @@ export const buildPhaseAttachment = (event) => {
 };
 
 // Construct the build message
-const buildEventToMessage = (event, gitDetails, failureMsg) => {
+const buildEventToMessage = (event, gitDetails, failureMsg, opts) => {
   const startTime = Date.parse(
     additionalInformation(event, 'build-start-time'),
   );
@@ -511,7 +534,7 @@ const buildEventToMessage = (event, gitDetails, failureMsg) => {
           )
           .map(phase => ({
             short: false,
-            title: failedMessage(phase['phase-type'], event.detail['build-status']),
+            title: failedMessage(phase['phase-type'], event.detail['build-status'], opts),
             value: failureMsg
           })),
       ],
@@ -530,13 +553,14 @@ export const handleCodeBuildEvent = async (event, slack, channel) => {
   const gitDetails = await getObject(gitDetailsHandle, false) || "";
   const failures = await getObject(failuresHandle, true) || "";
   const bid = buildId(event);
-  let failureMsg = formatFailures(failures);
+  let parsedFailures = parseFailures(failures);
+  let failureMsg = formatFailures(parsedFailures, commitId);
 
   console.log(`~~ [${event['detail-type']}] ${event.detail["completed-phase"]} | ${event.detail["completed-phase-status"]} | ${additionalInformation(event, "build-complete") == true ? "COMPLETE" : "INCOMPLETE"} | ${gitDetails} | ${failureMsg}`);
   let message = await findMessageForId(slack, channel.id, bid);
   if (message) {
     await slack.chat.update({
-      attachments: buildEventToMessage(event, gitDetails, failureMsg),
+      attachments: buildEventToMessage(event, gitDetails, failureMsg, { failedCount: parsedFailures.length }),
       channel: channel.id,
       text: '',
       ts: message.ts,
@@ -555,7 +579,7 @@ export const handleCodeBuildEvent = async (event, slack, channel) => {
     });
   } else {
     return await slack.chat.postMessage({
-      attachments: buildEventToMessage(event, gitDetails, failureMsg),
+      attachments: buildEventToMessage(event, gitDetails, failureMsg, { failedCount: parsedFailures.length }),
       channel: channel.id,
       text: '',
     });
