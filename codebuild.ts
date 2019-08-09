@@ -393,12 +393,15 @@ export const buildPhaseAttachment = (event) => {
       const stageTimes = {
         setup: stagePhases.setup
           .filter(phase => phase['duration-in-seconds'] > 0)
+          .map(phase => phase['duration-in-seconds'])
           .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0,
         build: stagePhases.build
-          .filter(phase => phase['duration-in-seconds'] > 0)
+          .filter(phase => phase['duration-in-seconds'] >= 0)
+          .map(phase => phase['duration-in-seconds'])
           .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0,
         test: stagePhases.test
           .filter(phase => phase['duration-in-seconds'] > 0)
+          .map(phase => phase['duration-in-seconds'])
           .reduce((previousValue, currentValue) => previousValue + currentValue, 0) || 0,
       };
 
@@ -466,8 +469,7 @@ const buildEventToMessage = (event, gitDetails, failureMsg) => {
   const minutes = Math.floor(elapsedTime / minute / msInS);
   const seconds = Math.floor(elapsedTime / msInS - minutes * minute);
 
-  const buildMsg = `<${buildUrl}|Build> of ${projectLink(event)} ${buildStatusToText(event.detail['build-status'])} 
-  ${minutes ? `${minutes} min ` : ''}${seconds ? `${seconds} sec` : ''}`;
+  const buildMsg = `<${buildUrl}|Build> of ${projectLink(event)} ${buildStatusToText(event.detail['build-status'])} (${minutes ? `${minutes} min ` : ''}${seconds ? `${seconds} sec` : ''})`;
 
   console.log(`>> Message: ${buildMsg}`);
 
@@ -478,8 +480,8 @@ const buildEventToMessage = (event, gitDetails, failureMsg) => {
       fields: [
         {
           short: false,
-          title: gitRevision(event),
-          value: gitDetails,
+          title: 'Git Details',
+          value: `${[gitDetails.trim(), gitRevision(event).trim()].join('\n').trim()}`,
         },
         ...(additionalInformation(event, "phases") || [])
           .filter(
