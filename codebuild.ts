@@ -204,7 +204,7 @@ export const projectLink = (event: CodeBuildEvent): string => {
       event.region
       }.console.aws.amazon.com/codebuild/home?region=${event.region}#/projects/${
       event.detail['project-name']
-      }/view|${event.detail['project-name']}>`;
+      }/view|benchpress-server>`;
   } catch (e) {
     console.log(e);
     return "null";
@@ -469,7 +469,27 @@ const buildEventToMessage = (event, gitDetails, failureMsg) => {
   const minutes = Math.floor(elapsedTime / minute / msInS);
   const seconds = Math.floor(elapsedTime / msInS - minutes * minute);
 
-  const buildMsg = `<${buildUrl}|Build> of ${projectLink(event)} ${buildStatusToText(event.detail['build-status'])} (${minutes ? `${minutes} min ` : ''}${seconds ? `${seconds} sec` : ''})`;
+  const minutesText = minutes ? `${minutes} min ` : '';
+  const secondsText = seconds ? `${seconds} sec` : '';
+  const buildFailed = (additionalInformation(event, "phases") || [])
+    .filter(
+      phase =>
+        phase['phase-status'] != null &&
+        phase['phase-status'] !== 'SUCCEEDED',
+    ).length > 0;
+  const buildPassed = (additionalInformation(event, "phases") || [])
+    .filter(
+      phase =>
+        phase['phase-status'] === 'SUCCEEDED' &&
+        phase['phase-type'] === 'POST_BUILD'
+    ).length > 0;
+
+  if (!event.detail['build-status']) {
+    if (buildFailed) event.detail['build-status'] = 'FAILED';
+    else if (buildPassed) event.detail['build-status'] = 'SUCCEEDED';
+    else event.detail['build-status'] = 'IN_PROGRESS';
+  }
+  const buildMsg = `<${buildUrl}|Build> of ${projectLink(event)} ${buildStatusToText(event.detail['build-status'])} (${minutesText}${secondsText})`;
 
   console.log(`>> Message: ${buildMsg}`);
 
@@ -480,7 +500,7 @@ const buildEventToMessage = (event, gitDetails, failureMsg) => {
       fields: [
         {
           short: false,
-          title: 'Git Details',
+          title: '',
           value: `${[gitDetails.trim(), gitRevision(event).trim()].join('\n').trim()}`,
         },
         ...(additionalInformation(event, "phases") || [])
