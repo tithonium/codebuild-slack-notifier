@@ -302,6 +302,21 @@ function formatFailures(failures, commitId) {
   }
 }
 
+function formatCopFailures(failures, commitId) {
+  try {
+    if (failures.length <= 0) return '';
+
+    const lines = failures.slice(0, ERRORS_TO_DISPLAY).join('\n');
+    return failures.length > ERRORS_TO_DISPLAY ?
+      ['```', lines, '```', `<${linkS3Bucket(commitId, "rubocop_failures.txt")}|Download all ${failures.length} errors`].join('\n').trim() :
+      ['```', lines, '```'].join('\n').trim();
+  } catch (e) {
+    console.log(e);
+    return "";
+  }
+}
+
+
 function parseFailures(failures) {
   try {
     if (failures == "") return [];
@@ -323,15 +338,45 @@ function parseFailures(failures) {
   }
 }
 
+function parseCopFailures(failures) {
+  try {
+    if (failures == "") return [];
+
+    let lines = failures.split('\n')
+      .filter(
+        line =>
+          line.startWith('== ')
+      ).map(
+        line =>
+          line.match(/== (.+) ==/)[1]
+      )
+    return lines;
+  } catch (e) {
+    console.log(e);
+    return [];
+  }
+}
+
 function failedMessage(phaseType, buildStatus, opts) {
   opts = opts || {};
   switch (phaseType) {
     case 'POST_BUILD':
-      if (opts.failedCount <= 0) return '';
-      return opts.failedCount > 1 ? `${opts.failedCount} tests failed` : `1 test failed`;
+      return combinedFailedMessage(opts)
     default:
       return `Phase ${phaseName(phaseType)} ${buildStatusToText(buildStatus)}`;
   }
+}
+
+function combinedFailedMessage(opts) {
+  const specFailedMessage = opts.failedCount <= 0 ?
+                             '' :
+                             (opts.failedCount > 1 ? `${opts.failedCount} tests failed` : `1 test failed`)
+  const copsFailedMessage = opts.copFailedCount <= 0 ?
+                             '' :
+                             (opts.copFailedCount > 1 ? `${opts.copFailedCount} files failed linting` : `1 file failed linting`)
+  return (specFailedMessage && copsFailedMessage) ?
+           `${specFailedMessage} and ${copsFailedMessage}` :
+           (specFailedMessage || copsFailedMessage)
 }
 
 function phaseName(phase) {
@@ -477,7 +522,7 @@ export const buildPhaseAttachment = (event) => {
 };
 
 // Construct the build message
-const buildEventToMessage = (event, gitDetails, failureMsg, opts) => {
+const buildEventToMessage = (event, gitDetails, failureMsg, copFailureMsg, opts) => {
   const startTime = Date.parse(
     additionalInformation(event, 'build-start-time'),
   );
@@ -516,6 +561,10 @@ const buildEventToMessage = (event, gitDetails, failureMsg, opts) => {
 
   console.log(`>> Message: ${buildMsg}`);
 
+  let combinedFailureMsg = (failureMsg && copFailureMsg) ?
+                             `${failureMsg}\n${copFailureMsg}` :
+                             (failureMsg || copFailureMsg)
+
   return [
     {
       color: buildStatusToColor(event.detail['build-status']),
@@ -535,7 +584,7 @@ const buildEventToMessage = (event, gitDetails, failureMsg, opts) => {
           .map(phase => ({
             short: false,
             title: failedMessage(phase['phase-type'], event.detail['build-status'], opts),
-            value: failureMsg
+            value: combinedFailureMsg
           })),
       ],
       footer: buildId(event),
@@ -550,17 +599,21 @@ export const handleCodeBuildEvent = async (event, slack, channel) => {
   const commitId = eventToCommitId(event);
   const gitDetailsHandle = s3Handle(commitId, "git-details.txt");
   const failuresHandle = s3Handle(commitId, "spec-failed.txt");
+  const copFailuresHandle = s3Handle(commitId, "rubocop_failures.txt");
   const gitDetails = await getObject(gitDetailsHandle, false) || "";
   const failures = await getObject(failuresHandle, true) || "";
+  const copFailures = await getObject(copFailuresHandle, true) || "";
   const bid = buildId(event);
   let parsedFailures = parseFailures(failures);
+  let parsedCopFailures = parseCopFailures(copFailures);
   let failureMsg = formatFailures(parsedFailures, commitId);
+  let copFailureMsg = formatCopFailures(parsedCopFailures, commitId);
 
-  console.log(`~~ [${event['detail-type']}] ${event.detail["completed-phase"]} | ${event.detail["completed-phase-status"]} | ${additionalInformation(event, "build-complete") == true ? "COMPLETE" : "INCOMPLETE"} | ${gitDetails} | ${failureMsg}`);
+  console.log(`~~ [${event['detail-type']}] ${event.detail["completed-phase"]} | ${event.detail["completed-phase-status"]} | ${additionalInformation(event, "build-complete") == true ? "COMPLETE" : "INCOMPLETE"} | ${gitDetails} | ${failureMsg} | ${copFailureMsg}`);
   let message = await findMessageForId(slack, channel.id, bid);
   if (message) {
     await slack.chat.update({
-      attachments: buildEventToMessage(event, gitDetails, failureMsg, { failedCount: parsedFailures.length }),
+      attachments: buildEventToMessage(event, gitDetails, failureMsg, copFailureMsg, { failedCount: parsedFailures.length, copFailedCount: parsedCopFailures.length }),
       channel: channel.id,
       text: '',
       ts: message.ts,
@@ -579,7 +632,7 @@ export const handleCodeBuildEvent = async (event, slack, channel) => {
     });
   } else {
     return await slack.chat.postMessage({
-      attachments: buildEventToMessage(event, gitDetails, failureMsg, { failedCount: parsedFailures.length }),
+      attachments: buildEventToMessage(event, gitDetails, failureMsg, copFailureMsg, { failedCount: parsedFailures.length, copFailedCount: parsedCopFailures.length }),
       channel: channel.id,
       text: '',
     });
